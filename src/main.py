@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -139,9 +140,12 @@ class Renamarr:
             tv_success = sum(1 for r in results["tv"] if r.success)
             tv_failed = sum(1 for r in results["tv"] if not r.success)
 
-            logger.info("Scan complete:")
-            logger.info(f"  Movies: {movies_success} success, {movies_failed} failed")
-            logger.info(f"  TV: {tv_success} success, {tv_failed} failed")
+            mode = "[DRY RUN] " if self.config.options.dry_run else ""
+            logger.info(f"{mode}Scan complete:")
+            logger.info(f"  Movies: {movies_success} renamed, {movies_failed} failed")
+            logger.info(f"  TV: {tv_success} renamed, {tv_failed} failed")
+            if self.config.options.dry_run:
+                logger.info("No files were changed. Set DRY_RUN=false to apply.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -185,8 +189,8 @@ async def async_main(args: argparse.Namespace) -> int:
         logger.error(f"Failed to load configuration: {e}")
         return 1
 
-    # Override dry run from command line
-    if args.dry_run:
+    # Override dry run from command line or DRY_RUN env var
+    if args.dry_run or os.environ.get("DRY_RUN", "").lower() in ("true", "1", "yes"):
         config.options.dry_run = True
 
     # Create application

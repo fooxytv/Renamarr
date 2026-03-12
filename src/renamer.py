@@ -256,7 +256,10 @@ class RenamerService:
         logger.info(f"Rename: {operation.source.name} -> {operation.destination}")
 
         if self.dry_run:
-            logger.info("[DRY RUN] Would rename file")
+            logger.info(f"[DRY RUN] Would rename: {operation.source.name}")
+            logger.info(f"[DRY RUN]           to: {operation.destination}")
+            for src, dst in operation.associated_files:
+                logger.info(f"[DRY RUN]   + associated: {src.name} -> {dst.name}")
             return RenameResult(operation=operation, success=True)
 
         try:
