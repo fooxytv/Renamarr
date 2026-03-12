@@ -41,6 +41,7 @@ class OMDbClient:
         self._last_request_time = 0.0
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, dict] = {}
+        self._rate_limited = False
 
     async def __aenter__(self) -> "OMDbClient":
         """Enter async context."""
@@ -81,6 +82,13 @@ class OMDbClient:
         await self._rate_limit()
 
         response = await self._client.get("/", params=params)
+
+        if response.status_code == 401:
+            if not self._rate_limited:
+                self._rate_limited = True
+                logger.warning("OMDb API daily limit reached. Remaining movies will be skipped.")
+            return None
+
         response.raise_for_status()
         data = response.json()
 

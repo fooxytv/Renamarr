@@ -144,6 +144,8 @@ class Renamarr:
             logger.info(f"{mode}Scan complete:")
             logger.info(f"  Movies: {movies_success} renamed, {movies_failed} failed")
             logger.info(f"  TV: {tv_success} renamed, {tv_failed} failed")
+            if self._omdb_client._rate_limited:
+                logger.warning("OMDb API daily limit was reached. Some movies were skipped. Try again tomorrow or upgrade your API key.")
             if self.config.options.dry_run:
                 logger.info("No files were changed. Set DRY_RUN=false to apply.")
 
