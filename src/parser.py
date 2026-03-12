@@ -223,8 +223,11 @@ def parse_media_file(path: Path) -> MediaInfo:
     elif media_type == "episode":
         info.media_type = "episode"
         info.show_name = guessit_data.get("title")
-        info.season = guessit_data.get("season")
-        info.episode = guessit_data.get("episode")
+        # guessit returns lists for multi-episode files (e.g. S01E01E02)
+        season = guessit_data.get("season")
+        info.season = season[0] if isinstance(season, list) else season
+        episode = guessit_data.get("episode")
+        info.episode = episode[0] if isinstance(episode, list) else episode
         info.episode_title = guessit_data.get("episode_title")
         info.year = guessit_data.get("year")
 
