@@ -219,14 +219,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
     # Run the application
     try:
-        if args.web:
-            import uvicorn
-            from .web.app import create_app
-
-            web_app = create_app(config, config.web.data_dir)
-            logger.info(f"Starting web UI on {config.web.host}:{config.web.port}")
-            uvicorn.run(web_app, host=config.web.host, port=config.web.port, log_level="info")
-        elif args.once:
+        if args.once:
             await app.run_once()
         else:
             await app.start()
@@ -246,6 +239,25 @@ def main() -> int:
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     setup_logging(log_level)
+
+    # Web mode runs uvicorn directly (it manages its own event loop)
+    if args.web:
+        import uvicorn
+        from .web.app import create_app
+
+        try:
+            config = load_config(args.config)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to load configuration: {e}")
+            return 1
+
+        if args.dry_run or os.environ.get("DRY_RUN", "").lower() in ("true", "1", "yes"):
+            config.options.dry_run = True
+
+        web_app = create_app(config, config.web.data_dir)
+        logging.getLogger(__name__).info(f"Starting web UI on {config.web.host}:{config.web.port}")
+        uvicorn.run(web_app, host=config.web.host, port=config.web.port, log_level="info")
+        return 0
 
     # Run async main
     return asyncio.run(async_main(args))
