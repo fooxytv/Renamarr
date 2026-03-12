@@ -245,6 +245,14 @@ class RenamerService:
 
     async def _execute_operation(self, operation: RenameOperation) -> RenameResult:
         """Execute a rename operation."""
+        # Skip if source is already at the correct destination
+        try:
+            if operation.source.resolve() == operation.destination.resolve():
+                logger.debug(f"Already correctly named: {operation.source.name}")
+                return RenameResult(operation=operation, success=True)
+        except OSError:
+            pass
+
         logger.info(f"Rename: {operation.source.name} -> {operation.destination}")
 
         if self.dry_run:

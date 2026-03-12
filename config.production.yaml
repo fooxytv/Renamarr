@@ -1,0 +1,33 @@
+# Renamarr Production Configuration
+# For scanning and cleaning up existing Plex libraries
+# Sonarr/Radarr handle new downloads - this handles existing files
+
+omdb:
+  api_key: "${OMDB_API_KEY}"
+
+# Watch and output are the SAME directory - renames files in-place
+directories:
+  movies:
+    watch: /media/movies
+    output: /media/movies
+  tv:
+    watch: /media/tv
+    output: /media/tv
+
+options:
+  # START WITH DRY RUN to review what it will do
+  dry_run: true
+  # Scan every 6 hours (existing library doesn't change often)
+  scan_interval: 21600
+  # No need to wait for file age since these are existing files
+  min_file_age: 0
+
+# Move duplicates to a separate folder for manual review
+duplicates:
+  action: move
+  duplicates_folder: /media/duplicates
+
+# Plex standard naming
+naming:
+  movies: "{title} ({year})/{title} ({year}){ext}"
+  tv: "{show}/Season {season:02d}/{show} - S{season:02d}E{episode:02d} - {episode_title}{ext}"
