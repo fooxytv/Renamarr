@@ -1,0 +1,53 @@
+# Renamarr Configuration
+
+# OMDb API Settings (for movies)
+# Get your free API key at: https://www.omdbapi.com/apikey.aspx
+# Only requires an email address - no personal info needed!
+omdb:
+  api_key: "${OMDB_API_KEY}"
+
+# Note: TV shows use TVMaze API which requires NO API key at all!
+
+# Directory Settings
+directories:
+  movies:
+    # Directory to watch for new movie files
+    watch: /media/downloads/movies
+    # Output directory for renamed movies
+    output: /media/library/movies
+  tv:
+    # Directory to watch for new TV show files
+    watch: /media/downloads/tv
+    # Output directory for renamed TV shows
+    output: /media/library/tv
+
+# General Options
+options:
+  # Preview changes without actually renaming files
+  dry_run: false
+  # Interval between periodic scans (seconds)
+  scan_interval: 300
+  # Minimum file age before processing (seconds)
+  # This helps ensure downloads are complete before processing
+  min_file_age: 60
+
+# Duplicate Handling
+duplicates:
+  # Action to take when duplicates are found:
+  # - keep_best: Keep highest quality, delete others
+  # - move: Move lower quality versions to duplicates folder
+  # - report_only: Just log duplicates, take no action
+  action: keep_best
+  # Folder to move duplicates to (required for 'move' action)
+  duplicates_folder: /media/duplicates
+
+# Naming Patterns (Plex standard)
+naming:
+  # Movie naming pattern
+  # Available variables: {title}, {year}, {ext}
+  movies: "{title} ({year})/{title} ({year}){ext}"
+
+  # TV show naming pattern
+  # Available variables: {show}, {season}, {episode}, {episode_title}, {ext}
+  # Numeric variables support format specs like :02d for zero-padding
+  tv: "{show}/Season {season:02d}/{show} - S{season:02d}E{episode:02d} - {episode_title}{ext}"

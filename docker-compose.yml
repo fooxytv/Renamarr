@@ -1,0 +1,21 @@
+services:
+  renamarr:
+    build: .
+    image: renamarr:latest
+    container_name: renamarr
+    restart: "no"  # Don't restart for testing
+    env_file:
+      - .env
+
+    volumes:
+      # Configuration file
+      - ./config.yaml:/app/config.yaml:ro
+
+      # Test media directories (relative paths work better on Windows)
+      - ./test_media/downloads/movies:/media/downloads/movies
+      - ./test_media/downloads/tv:/media/downloads/tv
+      - ./test_media/library/movies:/media/library/movies
+      - ./test_media/library/tv:/media/library/tv
+
+    # Testing mode: dry-run, single scan
+    command: python -m src.main --once --dry-run

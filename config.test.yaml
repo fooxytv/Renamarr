@@ -1,0 +1,19 @@
+# Test configuration
+omdb:
+  api_key: "${OMDB_API_KEY}"
+
+directories:
+  movies:
+    watch: ./test_media/downloads/movies
+    output: ./test_media/library/movies
+  tv:
+    watch: ./test_media/downloads/tv
+    output: ./test_media/library/tv
+
+options:
+  dry_run: true  # Won't actually move files
+  scan_interval: 300
+  min_file_age: 0  # Process immediately for testing
+
+duplicates:
+  action: report_only
