@@ -87,9 +87,14 @@ class DiscordNotifier:
         renamed: int,
         failed: int,
         errors: list[str] | None = None,
+        renames: list[dict] | None = None,
+        moved_to_trash: int = 0,
     ) -> None:
-        """Notify that renames have been executed."""
-        if renamed == 0 and failed == 0:
+        """Notify that renames have been executed.
+
+        renames: list of {"source": str, "destination": str, "media_type": str}
+        """
+        if renamed == 0 and failed == 0 and moved_to_trash == 0:
             return
 
         color = 3066993 if failed == 0 else 15158332  # Green or Red
@@ -101,6 +106,34 @@ class DiscordNotifier:
                 {"name": "Failed", "value": str(failed), "inline": True},
             ],
         }
+
+        if moved_to_trash > 0:
+            embed["fields"].append({"name": "Moved to Trash", "value": str(moved_to_trash), "inline": True})
+
+        # Build before → after code blocks grouped by type
+        if renames:
+            movie_renames = [r for r in renames if r["media_type"] == "movie"]
+            tv_renames = [r for r in renames if r["media_type"] != "movie"]
+
+            rename_parts = []
+
+            if movie_renames:
+                lines = []
+                for r in movie_renames[:10]:
+                    lines.append(f"{r['source']} → {r['destination']}")
+                if len(movie_renames) > 10:
+                    lines.append(f"...and {len(movie_renames) - 10} more")
+                rename_parts.append({"name": "Movies", "value": f"```\n" + "\n".join(lines) + "\n```"})
+
+            if tv_renames:
+                lines = []
+                for r in tv_renames[:10]:
+                    lines.append(f"{r['source']} → {r['destination']}")
+                if len(tv_renames) > 10:
+                    lines.append(f"...and {len(tv_renames) - 10} more")
+                rename_parts.append({"name": "TV", "value": f"```\n" + "\n".join(lines) + "\n```"})
+
+            embed["fields"].extend(rename_parts)
 
         if errors:
             error_text = "\n".join(errors[:5])

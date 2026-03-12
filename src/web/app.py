@@ -234,6 +234,7 @@ class RenamarrWeb:
             return {"error": "No scan results"}
 
         results = {"completed": 0, "failed": 0, "moved_to_trash": 0, "errors": []}
+        renames: list[dict] = []
 
         # Execute approved renames
         for file in scan.files:
@@ -253,6 +254,11 @@ class RenamarrWeb:
                 if result.success:
                     file.status = "completed"
                     results["completed"] += 1
+                    renames.append({
+                        "source": file.source_filename,
+                        "destination": file.destination_filename,
+                        "media_type": file.media_type,
+                    })
                 else:
                     file.status = "failed"
                     file.error = result.error
@@ -301,6 +307,8 @@ class RenamarrWeb:
             renamed=results["completed"],
             failed=results["failed"],
             errors=results.get("errors"),
+            renames=renames,
+            moved_to_trash=results["moved_to_trash"],
         )
 
         return results
