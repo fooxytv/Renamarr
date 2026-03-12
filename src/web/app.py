@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Config
 from ..duplicates import DuplicateHandler
 from ..formatter import PlexFormatter
+from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
 from ..renamer import RenameOperation, RenamerService
 from ..tvmaze_client import TVMazeClient
@@ -39,6 +40,7 @@ class RenamarrWeb:
         self._omdb_client: OMDbClient | None = None
         self._tvmaze_client: TVMazeClient | None = None
         self._renamer: RenamerService | None = None
+        self._notifier = DiscordNotifier()
         # Cache operations between preview and execute
         self._operations: dict[str, RenameOperation] = {}
 
@@ -112,11 +114,26 @@ class RenamarrWeb:
             scan.completed_at = datetime.now().isoformat()
             logger.info(f"Scan complete: {len(all_files)} files, {len(all_duplicates)} duplicate groups")
 
+            # Send Discord notification
+            pending = sum(1 for f in all_files if f.status == "pending")
+            correct = sum(1 for f in all_files if f.already_correct)
+            movies = sum(1 for f in all_files if f.media_type == "movie")
+            tv = sum(1 for f in all_files if f.media_type == "episode")
+            await self._notifier.scan_completed(
+                total_files=len(all_files),
+                movies=movies,
+                tv=tv,
+                duplicates=len(all_duplicates),
+                pending=pending,
+                already_correct=correct,
+            )
+
         except Exception as e:
             logger.error(f"Scan failed: {e}")
             scan.status = "failed"
             scan.error = str(e)
             scan.completed_at = datetime.now().isoformat()
+            await self._notifier.scan_failed(str(e))
 
         self.store.save_scan(scan)
         self.store.save_to_history(scan)
@@ -235,6 +252,14 @@ class RenamarrWeb:
                 results["errors"].append(f"{file.source_filename}: {e}")
 
         self.store.save_scan(scan)
+
+        # Send Discord notification
+        await self._notifier.execute_completed(
+            renamed=results["completed"],
+            failed=results["failed"],
+            errors=results.get("errors"),
+        )
+
         return results
 
 
