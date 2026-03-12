@@ -58,6 +58,7 @@ async function refreshStatus() {
     document.getElementById('stat-correct').textContent = correct > 0 ? correct : 0;
 
     document.getElementById('btn-scan').disabled = s.scanning;
+    document.getElementById('btn-cancel').style.display = s.scanning ? '' : 'none';
     document.getElementById('btn-execute').disabled = s.scanning || s.approved === 0;
 
     if (s.scanning) {
@@ -247,6 +248,12 @@ async function triggerScan() {
     document.getElementById('btn-scan').disabled = true;
     document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning your media library...</p></div>';
     startPolling();
+}
+
+async function cancelScan() {
+    await api('POST', '/api/scan/cancel');
+    stopPolling();
+    await loadScan();
 }
 
 async function approveFile(id) {

@@ -546,6 +546,26 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         web._scan_task = asyncio.create_task(web.run_scan())
         return {"message": "Scan started"}
 
+    @app.post("/api/scan/cancel", dependencies=[Depends(_verify_api_key)])
+    async def cancel_scan():
+        if not web.scanning:
+            raise HTTPException(409, "No scan in progress")
+        if web._scan_task and not web._scan_task.done():
+            web._scan_task.cancel()
+            try:
+                await web._scan_task
+            except asyncio.CancelledError:
+                pass
+        web.scanning = False
+        # Update persisted scan status
+        scan = web.store.load_scan()
+        if scan and scan.status == "running":
+            scan.status = "cancelled"
+            scan.completed_at = datetime.now().isoformat()
+            web.store.save_scan(scan)
+        logger.info("Scan cancelled by user")
+        return {"message": "Scan cancelled"}
+
     @app.get("/api/scan/current", dependencies=[Depends(_verify_api_key)])
     async def current_scan():
         scan = web.store.load_scan()
