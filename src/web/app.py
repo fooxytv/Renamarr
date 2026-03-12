@@ -84,8 +84,49 @@ class RenamarrWeb:
         self._tvmaze_client: TVMazeClient | None = None
         self._renamer: RenamerService | None = None
         self._notifier = DiscordNotifier()
-        # Cache operations between preview and execute
+        # Cache operations between preview and execute (in-memory + persisted)
         self._operations: dict[str, RenameOperation] = {}
+        # Load persisted operations on startup
+        self._load_persisted_operations()
+
+    def _serialize_operations(self) -> None:
+        """Save operations to disk so they survive restarts."""
+        serialized = {}
+        for file_id, op in self._operations.items():
+            serialized[file_id] = {
+                "source": str(op.source),
+                "destination": str(op.destination),
+                "media_type": op.media_info.media_type,
+                "associated_files": [
+                    [str(src), str(dst)] for src, dst in op.associated_files
+                ],
+            }
+        self.store.save_operations(serialized)
+
+    def _load_persisted_operations(self) -> None:
+        """Load operations from disk into memory."""
+        from ..parser import MediaInfo, QualityInfo
+
+        serialized = self.store.load_operations()
+        for file_id, data in serialized.items():
+            source = Path(data["source"])
+            # Create a minimal MediaInfo for the execute path
+            media_info = MediaInfo(
+                path=source,
+                media_type=data.get("media_type", "movie"),
+                quality=QualityInfo(),
+            )
+            associated = [
+                (Path(src), Path(dst)) for src, dst in data.get("associated_files", [])
+            ]
+            self._operations[file_id] = RenameOperation(
+                source=source,
+                destination=Path(data["destination"]),
+                media_info=media_info,
+                associated_files=associated,
+            )
+        if serialized:
+            logger.info(f"Loaded {len(serialized)} persisted operations")
 
     async def startup(self) -> None:
         """Initialize API clients."""
@@ -187,6 +228,7 @@ class RenamarrWeb:
 
         self.store.save_scan(scan)
         self.store.save_to_history(scan)
+        self._serialize_operations()
         self.scanning = False
 
     def _convert_results(

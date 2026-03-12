@@ -17,6 +17,7 @@ class ScanStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._scan_file = self.data_dir / "current_scan.json"
         self._history_file = self.data_dir / "scan_history.json"
+        self._operations_file = self.data_dir / "operations.json"
 
     def save_scan(self, scan: ScanResult) -> None:
         """Save the current scan result."""
@@ -92,3 +93,22 @@ class ScanStore:
     def load_history(self) -> list[dict]:
         """Load scan history."""
         return self._load_history()
+
+    def save_operations(self, operations: dict) -> None:
+        """Save serialized operations map to disk.
+
+        operations: dict of {file_id: {source, destination, media_type, associated_files}}
+        """
+        with open(self._operations_file, "w", encoding="utf-8") as f:
+            json.dump(operations, f, indent=2)
+
+    def load_operations(self) -> dict:
+        """Load serialized operations map from disk."""
+        if not self._operations_file.exists():
+            return {}
+        try:
+            with open(self._operations_file, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Failed to load operations: {e}")
+            return {}
