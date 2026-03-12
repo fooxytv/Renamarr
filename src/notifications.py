@@ -11,8 +11,20 @@ logger = logging.getLogger(__name__)
 class DiscordNotifier:
     """Sends notifications to Discord via webhook."""
 
+    ALLOWED_WEBHOOK_PREFIXES = (
+        "https://discord.com/api/webhooks/",
+        "https://discordapp.com/api/webhooks/",
+    )
+
     def __init__(self, webhook_url: str | None = None, web_url: str | None = None):
-        self.webhook_url = webhook_url or os.environ.get("RENAMARR_DISCORD_WEBHOOK")
+        url = webhook_url or os.environ.get("RENAMARR_DISCORD_WEBHOOK")
+
+        # Validate webhook URL to prevent SSRF
+        if url and not any(url.startswith(prefix) for prefix in self.ALLOWED_WEBHOOK_PREFIXES):
+            logger.error(f"Discord webhook URL rejected: must start with {self.ALLOWED_WEBHOOK_PREFIXES[0]}")
+            url = None
+
+        self.webhook_url = url
         self.web_url = web_url or os.environ.get("RENAMARR_WEB_URL")
         self._enabled = bool(self.webhook_url)
         if not self._enabled:

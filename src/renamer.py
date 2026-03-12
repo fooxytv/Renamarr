@@ -115,10 +115,9 @@ class RenamerService:
         self.duplicate_handler = duplicate_handler
         self.dry_run = config.options.dry_run
 
-        # Transaction log
-        self.transaction_log = TransactionLog(
-            Path(".renamarr_transactions.json")
-        )
+        # Transaction log (stored in web data dir or fallback to /app/data)
+        log_dir = config.web.data_dir if hasattr(config, "web") else Path("/app/data")
+        self.transaction_log = TransactionLog(log_dir / "transactions.json")
 
     async def process_file(self, file_path: Path) -> RenameResult | None:
         """Process a single media file.

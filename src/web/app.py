@@ -1,17 +1,22 @@
 """FastAPI web application for Renamarr."""
 
 import asyncio
+import hmac
 import logging
+import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
-from ..auth import get_passphrase, verify_code
+from ..auth import get_api_key, get_passphrase, verify_code
 from ..config import Config
 from ..duplicates import DuplicateHandler
 from ..formatter import PlexFormatter
@@ -29,6 +34,42 @@ from .models import (
 from .scan_store import ScanStore
 
 logger = logging.getLogger(__name__)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+class RateLimiter:
+    """Simple in-memory rate limiter per IP."""
+
+    def __init__(self, max_attempts: int = 5, window_seconds: int = 60):
+        self.max_attempts = max_attempts
+        self.window = window_seconds
+        self._attempts: dict[str, list[float]] = defaultdict(list)
+
+    def check(self, key: str) -> bool:
+        """Return True if the request is allowed, False if rate-limited."""
+        now = time.time()
+        attempts = self._attempts[key]
+        # Remove expired attempts
+        self._attempts[key] = [t for t in attempts if now - t < self.window]
+        if len(self._attempts[key]) >= self.max_attempts:
+            return False
+        self._attempts[key].append(now)
+        return True
+
+
+# Rate limiter for delete auth attempts (5 attempts per minute per IP)
+delete_rate_limiter = RateLimiter(max_attempts=5, window_seconds=60)
 
 
 class RenamarrWeb:
@@ -79,7 +120,7 @@ class RenamarrWeb:
 
     async def run_scan(self) -> None:
         """Run a scan in the background."""
-        scan_id = str(uuid.uuid4())[:8]
+        scan_id = str(uuid.uuid4())
         scan = ScanResult(
             scan_id=scan_id,
             started_at=datetime.now().isoformat(),
@@ -138,9 +179,9 @@ class RenamarrWeb:
             )
 
         except Exception as e:
-            logger.error(f"Scan failed: {e}")
+            logger.error(f"Scan failed: {e}", exc_info=True)
             scan.status = "failed"
-            scan.error = str(e)
+            scan.error = "Scan failed. Check server logs for details."
             scan.completed_at = datetime.now().isoformat()
             await self._notifier.scan_failed(str(e))
 
@@ -156,7 +197,7 @@ class RenamarrWeb:
         """Convert internal results to API models."""
         files = []
         for op in operations:
-            file_id = str(uuid.uuid4())[:8]
+            file_id = str(uuid.uuid4())
             # Check if already correctly named
             try:
                 already_correct = op.source.resolve() == op.destination.resolve()
@@ -200,7 +241,7 @@ class RenamarrWeb:
         # Convert duplicate groups
         dup_previews = []
         for group in duplicate_groups:
-            group_id = str(uuid.uuid4())[:8]
+            group_id = str(uuid.uuid4())
             group_files = []
             best = group.best_quality
             best_file_id = ""
@@ -337,11 +378,17 @@ class RenamarrWeb:
         if not dup_folder:
             return False
 
+        # Reject path traversal attempts
+        if "/" in filename or "\\" in filename or ".." in filename:
+            logger.warning(f"Path traversal attempt in trash delete: {filename}")
+            return False
+
         target = dup_folder / filename
-        # Security: ensure the file is actually inside the duplicates folder
+        # Security: ensure the resolved path is inside the duplicates folder
         try:
             target.resolve().relative_to(dup_folder.resolve())
         except ValueError:
+            logger.warning(f"Path traversal attempt in trash delete: {filename}")
             return False
 
         if target.exists() and target.is_file():
@@ -368,6 +415,29 @@ class RenamarrWeb:
         return count
 
 
+def _verify_api_key(x_api_key: str = Header(default="")):
+    """Dependency to verify API key if configured."""
+    required_key = get_api_key()
+    if not required_key:
+        return  # No API key configured, allow access
+    if not x_api_key or not hmac.compare_digest(x_api_key, required_key):
+        raise HTTPException(401, "Invalid or missing API key")
+
+
+def _verify_delete_code(request: Request, x_delete_code: str = Header(default="")):
+    """Dependency to verify delete auth code via header."""
+    passphrase = get_passphrase()
+    if not passphrase:
+        return  # No passphrase configured, allow delete
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not delete_rate_limiter.check(client_ip):
+        raise HTTPException(429, "Too many attempts. Try again later.")
+
+    if not x_delete_code or not verify_code(passphrase, x_delete_code):
+        raise HTTPException(403, "Invalid or expired delete code")
+
+
 def create_app(config: Config, data_dir: Path) -> FastAPI:
     """Create the FastAPI application."""
     web = RenamarrWeb(config, data_dir)
@@ -380,6 +450,9 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
 
     app = FastAPI(title="Renamarr", lifespan=lifespan)
 
+    # Security headers middleware
+    app.add_middleware(SecurityHeadersMiddleware)
+
     # Serve static files
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -389,7 +462,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         index_file = static_dir / "index.html"
         return index_file.read_text(encoding="utf-8")
 
-    @app.get("/api/status")
+    @app.get("/api/status", dependencies=[Depends(_verify_api_key)])
     async def status() -> StatusResponse:
         scan = web.store.load_scan()
         resp = StatusResponse(
@@ -406,7 +479,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             resp.failed = sum(1 for f in scan.files if f.status == "failed")
         return resp
 
-    @app.post("/api/scan")
+    @app.post("/api/scan", dependencies=[Depends(_verify_api_key)])
     async def trigger_scan():
         if web.scanning:
             raise HTTPException(409, "Scan already in progress")
@@ -414,46 +487,46 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         asyncio.create_task(web.run_scan())
         return {"message": "Scan started"}
 
-    @app.get("/api/scan/current")
+    @app.get("/api/scan/current", dependencies=[Depends(_verify_api_key)])
     async def current_scan():
         scan = web.store.load_scan()
         if not scan:
             raise HTTPException(404, "No scan results")
         return scan
 
-    @app.get("/api/history")
+    @app.get("/api/history", dependencies=[Depends(_verify_api_key)])
     async def scan_history():
         return web.store.load_history()
 
-    @app.post("/api/files/{file_id}/approve")
+    @app.post("/api/files/{file_id}/approve", dependencies=[Depends(_verify_api_key)])
     async def approve_file(file_id: str):
         if not web.store.update_file_status(file_id, "approved"):
             raise HTTPException(404, "File not found")
         return {"status": "approved"}
 
-    @app.post("/api/files/{file_id}/reject")
+    @app.post("/api/files/{file_id}/reject", dependencies=[Depends(_verify_api_key)])
     async def reject_file(file_id: str):
         if not web.store.update_file_status(file_id, "rejected"):
             raise HTTPException(404, "File not found")
         return {"status": "rejected"}
 
-    @app.post("/api/files/{file_id}/pending")
+    @app.post("/api/files/{file_id}/pending", dependencies=[Depends(_verify_api_key)])
     async def reset_file(file_id: str):
         if not web.store.update_file_status(file_id, "pending"):
             raise HTTPException(404, "File not found")
         return {"status": "pending"}
 
-    @app.post("/api/files/approve-all")
+    @app.post("/api/files/approve-all", dependencies=[Depends(_verify_api_key)])
     async def approve_all():
         count = web.store.update_all_pending("approved")
         return {"approved": count}
 
-    @app.post("/api/files/reject-all")
+    @app.post("/api/files/reject-all", dependencies=[Depends(_verify_api_key)])
     async def reject_all():
         count = web.store.update_all_pending("rejected")
         return {"rejected": count}
 
-    @app.post("/api/execute")
+    @app.post("/api/execute", dependencies=[Depends(_verify_api_key)])
     async def execute():
         if web.scanning:
             raise HTTPException(409, "Cannot execute while scan is running")
@@ -461,7 +534,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         return results
 
     # Trash management endpoints
-    @app.get("/api/trash")
+    @app.get("/api/trash", dependencies=[Depends(_verify_api_key)])
     async def list_trash():
         files = web.list_trash()
         total_size = sum(f["size"] for f in files)
@@ -473,22 +546,14 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             "delete_auth_required": bool(get_passphrase()),
         }
 
-    @app.delete("/api/trash/{filename}")
-    async def delete_trash_file(filename: str, code: str = ""):
-        passphrase = get_passphrase()
-        if passphrase:
-            if not code or not verify_code(passphrase, code):
-                raise HTTPException(403, "Invalid or expired delete code")
+    @app.delete("/api/trash/{filename}", dependencies=[Depends(_verify_api_key), Depends(_verify_delete_code)])
+    async def delete_trash_file(filename: str):
         if not web.delete_trash_file(filename):
             raise HTTPException(404, "File not found")
         return {"deleted": filename}
 
-    @app.delete("/api/trash")
-    async def empty_trash(code: str = ""):
-        passphrase = get_passphrase()
-        if passphrase:
-            if not code or not verify_code(passphrase, code):
-                raise HTTPException(403, "Invalid or expired delete code")
+    @app.delete("/api/trash", dependencies=[Depends(_verify_api_key), Depends(_verify_delete_code)])
+    async def empty_trash():
         count = web.empty_trash()
         return {"deleted": count}
 

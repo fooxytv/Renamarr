@@ -3,12 +3,28 @@ let currentFilter = 'all';
 let currentTypeFilter = 'all';
 let currentTab = 'files';
 let pollInterval = null;
+let apiKey = localStorage.getItem('renamarr_api_key') || '';
 
 // API helpers
+function getHeaders(extra) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['X-Api-Key'] = apiKey;
+    if (extra) Object.assign(headers, extra);
+    return headers;
+}
+
 async function api(method, path, body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const opts = { method, headers: getHeaders() };
     if (body) opts.body = JSON.stringify(body);
     const r = await fetch(API + path, opts);
+    if (r.status === 401) {
+        const key = prompt('API key required. Enter your RENAMARR_API_KEY:');
+        if (key) {
+            apiKey = key.trim();
+            localStorage.setItem('renamarr_api_key', apiKey);
+            return api(method, path, body);
+        }
+    }
     return r.json();
 }
 
@@ -333,7 +349,7 @@ function renderTrash(data) {
     html += '</tbody></table>';
 
     if (trashAuthRequired) {
-        html += '<div class="auth-notice">Delete operations require a code. Run: <code>python -m src.main --delete-code YOUR_PASSPHRASE</code></div>';
+        html += '<div class="auth-notice">Delete operations require an 8-digit code. Run: <code>docker exec renamarr python -m src.main --delete-code YOUR_PASSPHRASE</code></div>';
     }
 
     document.getElementById('tab-trash').innerHTML = html;
@@ -341,7 +357,7 @@ function renderTrash(data) {
 
 async function getDeleteCode() {
     if (!trashAuthRequired) return '';
-    const code = prompt('Enter your 6-digit delete code.\n\nGenerate one by running:\ndocker exec renamarr python -m src.main --delete-code YOUR_PASSPHRASE');
+    const code = prompt('Enter your 8-digit delete code.\n\nGenerate one by running:\ndocker exec renamarr python -m src.main --delete-code YOUR_PASSPHRASE');
     if (!code) return null;
     return code.trim();
 }
@@ -351,8 +367,9 @@ async function deleteTrashFile(filename) {
     const code = await getDeleteCode();
     if (code === null) return;
     try {
-        const codeParam = code ? '?code=' + encodeURIComponent(code) : '';
-        const r = await fetch(API + '/api/trash/' + encodeURIComponent(filename) + codeParam, { method: 'DELETE' });
+        const headers = getHeaders();
+        if (code) headers['X-Delete-Code'] = code;
+        const r = await fetch(API + '/api/trash/' + encodeURIComponent(filename), { method: 'DELETE', headers });
         const data = await r.json();
         if (!r.ok) {
             alert(data.detail || 'Delete failed');
@@ -369,8 +386,9 @@ async function emptyTrash() {
     const code = await getDeleteCode();
     if (code === null) return;
     try {
-        const codeParam = code ? '?code=' + encodeURIComponent(code) : '';
-        const r = await fetch(API + '/api/trash' + codeParam, { method: 'DELETE' });
+        const headers = getHeaders();
+        if (code) headers['X-Delete-Code'] = code;
+        const r = await fetch(API + '/api/trash', { method: 'DELETE', headers });
         const data = await r.json();
         if (!r.ok) {
             alert(data.detail || 'Delete failed');

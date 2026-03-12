@@ -17,8 +17,5 @@ venv/
 # Test media
 test_media/
 
-# Transaction log
-.renamarr_transactions.json
-
 # Claude
 .claude/
