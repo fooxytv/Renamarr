@@ -97,8 +97,18 @@ class Config(BaseModel):
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
-        # Expand environment variables in OMDb API key
-        if "omdb" in data and "api_key" in data["omdb"]:
+        if not data:
+            raise ValueError(f"Configuration file is empty: {path}")
+
+        # Ensure omdb section exists
+        if "omdb" not in data:
+            data["omdb"] = {}
+
+        # Resolve OMDb API key: env var > ${VAR} syntax in yaml > empty
+        env_api_key = os.environ.get("OMDB_API_KEY")
+        if env_api_key:
+            data["omdb"]["api_key"] = env_api_key
+        elif "api_key" in data["omdb"]:
             api_key = data["omdb"]["api_key"]
             if isinstance(api_key, str) and api_key.startswith("${"):
                 env_var = api_key[2:-1]
