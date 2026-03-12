@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..auth import get_passphrase, verify_code
 from ..config import Config
 from ..duplicates import DuplicateHandler
 from ..formatter import PlexFormatter
@@ -18,6 +19,7 @@ from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
 from ..renamer import RenameOperation, RenamerService
 from ..tvmaze_client import TVMazeClient
+from ..utils import format_size
 from .models import (
     DuplicateGroupPreview,
     FilePreview,
@@ -85,6 +87,7 @@ class RenamarrWeb:
         )
         self.store.save_scan(scan)
         self._operations.clear()
+        scan_start = datetime.now()
 
         try:
             all_files: list[FilePreview] = []
@@ -119,6 +122,9 @@ class RenamarrWeb:
             correct = sum(1 for f in all_files if f.already_correct)
             movies = sum(1 for f in all_files if f.media_type == "movie")
             tv = sum(1 for f in all_files if f.media_type == "episode")
+            pending_movies = sum(1 for f in all_files if f.status == "pending" and f.media_type == "movie")
+            pending_tv = sum(1 for f in all_files if f.status == "pending" and f.media_type == "episode")
+            duration = (datetime.now() - scan_start).total_seconds()
             await self._notifier.scan_completed(
                 total_files=len(all_files),
                 movies=movies,
@@ -126,6 +132,9 @@ class RenamarrWeb:
                 duplicates=len(all_duplicates),
                 pending=pending,
                 already_correct=correct,
+                pending_movies=pending_movies,
+                pending_tv=pending_tv,
+                duration_seconds=duration,
             )
 
         except Exception as e:
@@ -216,13 +225,17 @@ class RenamarrWeb:
         return files, dup_previews
 
     async def execute_approved(self) -> dict:
-        """Execute all approved renames."""
+        """Execute all approved renames and move rejected duplicates."""
+        import shutil
+        from .models import FilePreview
+
         scan = self.store.load_scan()
         if not scan:
             return {"error": "No scan results"}
 
-        results = {"completed": 0, "failed": 0, "errors": []}
+        results = {"completed": 0, "failed": 0, "moved_to_trash": 0, "errors": []}
 
+        # Execute approved renames
         for file in scan.files:
             if file.status != "approved":
                 continue
@@ -251,6 +264,36 @@ class RenamarrWeb:
                 results["failed"] += 1
                 results["errors"].append(f"{file.source_filename}: {e}")
 
+        # Move rejected files to duplicates folder (if configured)
+        dup_folder = self.config.duplicates.duplicates_folder
+        if dup_folder:
+            for file in scan.files:
+                if file.status != "rejected":
+                    continue
+
+                source = Path(file.source_path)
+                if not source.exists():
+                    continue
+
+                try:
+                    dup_folder.mkdir(parents=True, exist_ok=True)
+                    dest = dup_folder / source.name
+                    # Avoid overwriting
+                    if dest.exists():
+                        stem = dest.stem
+                        suffix = dest.suffix
+                        counter = 1
+                        while dest.exists():
+                            dest = dup_folder / f"{stem} ({counter}){suffix}"
+                            counter += 1
+                    shutil.move(str(source), str(dest))
+                    file.status = "moved_to_trash"
+                    results["moved_to_trash"] += 1
+                    logger.info(f"Moved to duplicates: {source.name} -> {dest}")
+                except Exception as e:
+                    logger.error(f"Failed to move {source.name} to duplicates: {e}")
+                    results["errors"].append(f"{file.source_filename}: move to duplicates failed: {e}")
+
         self.store.save_scan(scan)
 
         # Send Discord notification
@@ -261,6 +304,60 @@ class RenamarrWeb:
         )
 
         return results
+
+    def list_trash(self) -> list[dict]:
+        """List files in the duplicates/trash folder."""
+        dup_folder = self.config.duplicates.duplicates_folder
+        if not dup_folder or not dup_folder.exists():
+            return []
+
+        files = []
+        for f in sorted(dup_folder.iterdir()):
+            if f.is_file():
+                stat = f.stat()
+                files.append({
+                    "name": f.name,
+                    "size": stat.st_size,
+                    "size_human": format_size(stat.st_size),
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
+        return files
+
+    def delete_trash_file(self, filename: str) -> bool:
+        """Delete a single file from the duplicates/trash folder."""
+        dup_folder = self.config.duplicates.duplicates_folder
+        if not dup_folder:
+            return False
+
+        target = dup_folder / filename
+        # Security: ensure the file is actually inside the duplicates folder
+        try:
+            target.resolve().relative_to(dup_folder.resolve())
+        except ValueError:
+            return False
+
+        if target.exists() and target.is_file():
+            target.unlink()
+            logger.info(f"Deleted from trash: {filename}")
+            return True
+        return False
+
+    def empty_trash(self) -> int:
+        """Delete all files in the duplicates/trash folder. Returns count deleted."""
+        dup_folder = self.config.duplicates.duplicates_folder
+        if not dup_folder or not dup_folder.exists():
+            return 0
+
+        count = 0
+        for f in dup_folder.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    count += 1
+                except OSError as e:
+                    logger.error(f"Failed to delete {f.name}: {e}")
+        logger.info(f"Emptied trash: {count} files deleted")
+        return count
 
 
 def create_app(config: Config, data_dir: Path) -> FastAPI:
@@ -354,5 +451,37 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             raise HTTPException(409, "Cannot execute while scan is running")
         results = await web.execute_approved()
         return results
+
+    # Trash management endpoints
+    @app.get("/api/trash")
+    async def list_trash():
+        files = web.list_trash()
+        total_size = sum(f["size"] for f in files)
+        return {
+            "files": files,
+            "count": len(files),
+            "total_size": total_size,
+            "total_size_human": format_size(total_size),
+            "delete_auth_required": bool(get_passphrase()),
+        }
+
+    @app.delete("/api/trash/{filename}")
+    async def delete_trash_file(filename: str, code: str = ""):
+        passphrase = get_passphrase()
+        if passphrase:
+            if not code or not verify_code(passphrase, code):
+                raise HTTPException(403, "Invalid or expired delete code")
+        if not web.delete_trash_file(filename):
+            raise HTTPException(404, "File not found")
+        return {"deleted": filename}
+
+    @app.delete("/api/trash")
+    async def empty_trash(code: str = ""):
+        passphrase = get_passphrase()
+        if passphrase:
+            if not code or not verify_code(passphrase, code):
+                raise HTTPException(403, "Invalid or expired delete code")
+        count = web.empty_trash()
+        return {"deleted": count}
 
     return app

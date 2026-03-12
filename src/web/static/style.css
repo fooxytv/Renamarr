@@ -162,6 +162,14 @@ header h1 span {
 .filter-group {
     display: flex;
     gap: 4px;
+    align-items: center;
+}
+
+.filter-label {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    font-weight: 500;
+    margin-right: 4px;
 }
 
 .filter-btn {
@@ -311,6 +319,24 @@ header h1 span {
     text-align: center;
     padding: 60px 20px;
     color: var(--text-dim);
+}
+
+/* Auth notice */
+.auth-notice {
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: rgba(255,193,7,0.1);
+    border: 1px solid rgba(255,193,7,0.3);
+    border-radius: 6px;
+    color: var(--yellow);
+    font-size: 0.85rem;
+}
+
+.auth-notice code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8rem;
 }
 
 /* Responsive */

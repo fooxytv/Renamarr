@@ -63,7 +63,7 @@ class PlexFormatter:
             title = omdb_result.title
             year = omdb_result.year
         else:
-            title = media_info.title or "Unknown Movie"
+            title = (media_info.title or "Unknown Movie").title()
             year = media_info.year
 
         # Handle missing year
@@ -120,7 +120,7 @@ class PlexFormatter:
         if tv_result:
             show = tv_result.name
         else:
-            show = media_info.show_name or "Unknown Show"
+            show = (media_info.show_name or "Unknown Show").title()
 
         if episode_result:
             season = episode_result.season_number

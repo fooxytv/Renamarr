@@ -5,6 +5,8 @@ import re
 import time
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # Common video file extensions
 VIDEO_EXTENSIONS = {
     ".mkv",
@@ -107,9 +109,72 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
-def ensure_directory(path: Path) -> None:
-    """Ensure a directory exists, creating it if necessary."""
-    path.mkdir(parents=True, exist_ok=True)
+def resolve_case_insensitive(path: Path) -> Path:
+    """Resolve a path using case-insensitive matching for each component.
+
+    On Linux, 'War of the Worlds (2025)' and 'war of the worlds (2025)'
+    are different directories. This finds an existing one to reuse,
+    preventing duplicate folders with different casing.
+
+    Walks the path from the root, and for each component checks if a
+    case-insensitive match already exists on disk. If so, uses the
+    existing name. Otherwise, uses the requested name.
+    """
+    # Find the existing ancestor and the parts that need resolving
+    parts = []
+    current = path
+    while not current.exists() and current != current.parent:
+        parts.append(current.name)
+        current = current.parent
+
+    if not parts:
+        return path
+
+    # Resolve each part from the existing ancestor downward
+    resolved = current
+    for part in reversed(parts):
+        part_lower = part.lower()
+        match = None
+        try:
+            for child in resolved.iterdir():
+                if child.is_dir() and child.name.lower() == part_lower:
+                    match = child
+                    break
+        except (PermissionError, OSError):
+            pass
+
+        resolved = match if match else (resolved / part)
+
+    return resolved
+
+
+def ensure_directory(path: Path) -> Path:
+    """Ensure a directory exists, reusing case-insensitive matches.
+
+    Returns the actual path used (which may differ in casing from the input).
+    """
+    resolved = resolve_case_insensitive(path)
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def cleanup_empty_directories(path: Path, stop_at: Path | None = None) -> None:
+    """Remove empty directories, walking up from path.
+
+    Removes the directory at path if empty, then its parent, etc.
+    Stops at stop_at (exclusive) to avoid removing top-level watch dirs.
+    """
+    current = path
+    while current != stop_at and current != current.parent:
+        try:
+            if current.is_dir() and not any(current.iterdir()):
+                current.rmdir()
+                logger.debug(f"Removed empty directory: {current}")
+            else:
+                break
+        except (PermissionError, OSError):
+            break
+        current = current.parent
 
 
 def get_unique_path(path: Path) -> Path:

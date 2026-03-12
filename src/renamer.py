@@ -14,7 +14,7 @@ from .formatter import FormattedPath, PlexFormatter
 from .omdb_client import MovieResult, OMDbClient
 from .parser import MediaInfo, parse_media_file
 from .tvmaze_client import EpisodeResult, TVMazeClient, TVShowResult
-from .utils import ensure_directory, get_associated_files, get_unique_path, is_video_file
+from .utils import cleanup_empty_directories, ensure_directory, get_associated_files, get_unique_path, is_video_file
 
 logger = logging.getLogger(__name__)
 
@@ -263,25 +263,38 @@ class RenamerService:
             return RenameResult(operation=operation, success=True)
 
         try:
-            # Ensure destination directory exists
-            ensure_directory(operation.destination.parent)
+            # Ensure destination directory exists (case-insensitive match)
+            actual_dest_dir = ensure_directory(operation.destination.parent)
+            dest = actual_dest_dir / operation.destination.name
 
             # Handle existing file
-            dest = operation.destination
             if dest.exists():
                 dest = get_unique_path(dest)
                 logger.warning(f"Destination exists, using: {dest}")
+
+            # Remember source directory for cleanup
+            source_dir = operation.source.parent
+
+            # Determine the top-level watch directory to stop cleanup at
+            if operation.media_info.is_movie:
+                stop_at = self.config.directories.movies.watch
+            else:
+                stop_at = self.config.directories.tv.watch
 
             # Move the main file
             shutil.move(str(operation.source), str(dest))
             logger.info(f"Moved: {operation.source} -> {dest}")
 
             # Move associated files
-            for src, dst in operation.associated_files:
-                if dst.exists():
-                    dst = get_unique_path(dst)
-                shutil.move(str(src), str(dst))
-                logger.info(f"Moved associated: {src.name} -> {dst.name}")
+            for src, assoc_dst in operation.associated_files:
+                actual_assoc_dest = actual_dest_dir / assoc_dst.name
+                if actual_assoc_dest.exists():
+                    actual_assoc_dest = get_unique_path(actual_assoc_dest)
+                shutil.move(str(src), str(actual_assoc_dest))
+                logger.info(f"Moved associated: {src.name} -> {actual_assoc_dest.name}")
+
+            # Clean up empty source directories
+            cleanup_empty_directories(source_dir, stop_at=stop_at)
 
             # Log the operation
             self.transaction_log.log_operation(operation, success=True)

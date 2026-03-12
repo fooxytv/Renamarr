@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 class DiscordNotifier:
     """Sends notifications to Discord via webhook."""
 
-    def __init__(self, webhook_url: str | None = None):
+    def __init__(self, webhook_url: str | None = None, web_url: str | None = None):
         self.webhook_url = webhook_url or os.environ.get("RENAMARR_DISCORD_WEBHOOK")
+        self.web_url = web_url or os.environ.get("RENAMARR_WEB_URL")
         self._enabled = bool(self.webhook_url)
         if not self._enabled:
             logger.info("Discord notifications disabled (no webhook URL configured)")
@@ -45,6 +46,9 @@ class DiscordNotifier:
         duplicates: int,
         pending: int,
         already_correct: int,
+        pending_movies: int = 0,
+        pending_tv: int = 0,
+        duration_seconds: float | None = None,
     ) -> None:
         """Notify that a scan has completed."""
         embed = {
@@ -54,13 +58,27 @@ class DiscordNotifier:
                 {"name": "Total Files", "value": str(total_files), "inline": True},
                 {"name": "Movies", "value": str(movies), "inline": True},
                 {"name": "TV Episodes", "value": str(tv), "inline": True},
-                {"name": "Need Renaming", "value": str(pending), "inline": True},
+                {"name": "Need Renaming", "value": f"{pending} ({pending_movies} movies, {pending_tv} TV)", "inline": True},
                 {"name": "Duplicates Found", "value": str(duplicates), "inline": True},
                 {"name": "Already Correct", "value": str(already_correct), "inline": True},
             ],
         }
+
+        description_parts = []
         if pending > 0:
-            embed["description"] = f"{pending} files ready for review in the web UI."
+            if self.web_url:
+                description_parts.append(f"[{pending} files ready for review]({self.web_url})")
+            else:
+                description_parts.append(f"{pending} files ready for review in the web UI.")
+
+        if description_parts:
+            embed["description"] = "\n".join(description_parts)
+
+        if duration_seconds is not None:
+            minutes = int(duration_seconds // 60)
+            seconds = int(duration_seconds % 60)
+            duration_str = f"{minutes}m {seconds}s" if minutes > 0 else f"{seconds}s"
+            embed["footer"] = {"text": f"Scan completed in {duration_str}"}
 
         await self._send([embed])
 

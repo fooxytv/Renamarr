@@ -181,6 +181,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--delete-code",
+        type=str,
+        metavar="PASSPHRASE",
+        help="Generate a time-limited delete code from your passphrase",
+    )
     return parser.parse_args()
 
 
@@ -235,6 +241,14 @@ async def async_main(args: argparse.Namespace) -> int:
 def main() -> int:
     """Main entry point."""
     args = parse_args()
+
+    # Generate delete code and exit
+    if args.delete_code:
+        from .auth import generate_code
+        code = generate_code(args.delete_code)
+        print(f"Delete code: {code}")
+        print("Valid for 2 minutes.")
+        return 0
 
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO

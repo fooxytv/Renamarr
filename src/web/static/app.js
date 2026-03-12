@@ -1,5 +1,6 @@
 const API = '';
 let currentFilter = 'all';
+let currentTypeFilter = 'all';
 let currentTab = 'files';
 let pollInterval = null;
 
@@ -106,12 +107,28 @@ function updateTabBadges(scan) {
 
 // Render file table
 function renderFiles(files) {
-    const filtered = currentFilter === 'all' ? files : files.filter(f => f.status === currentFilter);
+    // Apply type filter first
+    const typeFiltered = currentTypeFilter === 'all' ? files : files.filter(f => f.media_type === currentTypeFilter);
+    // Then apply status filter
+    const filtered = currentFilter === 'all' ? typeFiltered : typeFiltered.filter(f => f.status === currentFilter);
+
+    const movieCount = files.filter(f => f.media_type === 'movie').length;
+    const tvCount = files.filter(f => f.media_type === 'episode').length;
 
     let html = '<div class="toolbar">';
     html += '<div class="filter-group">';
+    html += '<span class="filter-label">Type:</span>';
+    [['all', 'All (' + files.length + ')'], ['movie', 'Movies (' + movieCount + ')'], ['episode', 'TV (' + tvCount + ')']].forEach(([key, label]) => {
+        html += '<button class="filter-btn' + (currentTypeFilter === key ? ' active' : '') + '" onclick="setTypeFilter(\'' + key + '\')">' + label + '</button>';
+    });
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div class="toolbar">';
+    html += '<div class="filter-group">';
+    html += '<span class="filter-label">Status:</span>';
     ['all', 'pending', 'approved', 'rejected', 'correct', 'completed'].forEach(f => {
-        const count = f === 'all' ? files.length : files.filter(x => x.status === f).length;
+        const count = f === 'all' ? typeFiltered.length : typeFiltered.filter(x => x.status === f).length;
         html += '<button class="filter-btn' + (currentFilter === f ? ' active' : '') + '" onclick="setFilter(\'' + f + '\')">' + f + ' (' + count + ')</button>';
     });
     html += '</div>';
@@ -262,9 +279,108 @@ function setFilter(f) {
     loadScan();
 }
 
+function setTypeFilter(f) {
+    currentTypeFilter = f;
+    loadScan();
+}
+
 function esc(s) {
     if (!s) return '';
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Trash management
+let trashAuthRequired = false;
+
+async function loadTrash() {
+    try {
+        const data = await api('GET', '/api/trash');
+        trashAuthRequired = data.delete_auth_required;
+        document.getElementById('badge-trash').textContent = data.count;
+        renderTrash(data);
+    } catch (e) {
+        showEmpty('trash', 'Failed to load trash.');
+    }
+}
+
+function renderTrash(data) {
+    if (!data.files || data.files.length === 0) {
+        showEmpty('trash', 'Trash is empty.');
+        return;
+    }
+
+    let html = '<div class="toolbar">';
+    html += '<div class="filter-group">';
+    html += '<span class="filter-label">' + data.count + ' files (' + data.total_size_human + ')</span>';
+    html += '</div>';
+    html += '<div class="toolbar-spacer"></div>';
+    html += '<button class="btn btn-danger btn-sm" onclick="emptyTrash()">Empty Trash</button>';
+    html += '</div>';
+
+    html += '<table class="file-table"><thead><tr>';
+    html += '<th>Filename</th><th>Size</th><th>Date Moved</th><th>Actions</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const f of data.files) {
+        html += '<tr>';
+        html += '<td class="filename" title="' + esc(f.name) + '">' + esc(f.name) + '</td>';
+        html += '<td>' + f.size_human + '</td>';
+        html += '<td>' + new Date(f.modified).toLocaleString() + '</td>';
+        html += '<td><button class="btn btn-danger btn-sm" onclick="deleteTrashFile(\'' + esc(f.name) + '\')">Delete</button></td>';
+        html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+
+    if (trashAuthRequired) {
+        html += '<div class="auth-notice">Delete operations require a code. Run: <code>python -m src.main --delete-code YOUR_PASSPHRASE</code></div>';
+    }
+
+    document.getElementById('tab-trash').innerHTML = html;
+}
+
+async function getDeleteCode() {
+    if (!trashAuthRequired) return '';
+    const code = prompt('Enter your 6-digit delete code.\n\nGenerate one by running:\ndocker exec renamarr python -m src.main --delete-code YOUR_PASSPHRASE');
+    if (!code) return null;
+    return code.trim();
+}
+
+async function deleteTrashFile(filename) {
+    if (!confirm('Permanently delete "' + filename + '"?')) return;
+    const code = await getDeleteCode();
+    if (code === null) return;
+    try {
+        const codeParam = code ? '?code=' + encodeURIComponent(code) : '';
+        const r = await fetch(API + '/api/trash/' + encodeURIComponent(filename) + codeParam, { method: 'DELETE' });
+        const data = await r.json();
+        if (!r.ok) {
+            alert(data.detail || 'Delete failed');
+            return;
+        }
+        await loadTrash();
+    } catch (e) {
+        alert('Delete failed: ' + e.message);
+    }
+}
+
+async function emptyTrash() {
+    if (!confirm('Permanently delete ALL files in trash? This cannot be undone.')) return;
+    const code = await getDeleteCode();
+    if (code === null) return;
+    try {
+        const codeParam = code ? '?code=' + encodeURIComponent(code) : '';
+        const r = await fetch(API + '/api/trash' + codeParam, { method: 'DELETE' });
+        const data = await r.json();
+        if (!r.ok) {
+            alert(data.detail || 'Delete failed');
+            return;
+        }
+        alert(data.deleted + ' files deleted.');
+        await loadTrash();
+    } catch (e) {
+        alert('Delete failed: ' + e.message);
+    }
 }
 
 // Init
@@ -273,6 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
         t.addEventListener('click', () => {
             switchTab(t.dataset.tab);
             if (t.dataset.tab === 'history') loadHistory();
+            if (t.dataset.tab === 'trash') loadTrash();
         });
     });
 
