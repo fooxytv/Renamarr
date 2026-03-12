@@ -373,6 +373,91 @@ class RenamerService:
 
         return results
 
+    async def preview_file(self, file_path: Path) -> RenameOperation | None:
+        """Preview a rename without executing it.
+
+        Returns the operation that would be performed, or None if skipped.
+        """
+        if not is_video_file(file_path):
+            return None
+
+        media_info = parse_media_file(file_path)
+        if not media_info.media_type:
+            return None
+
+        omdb_movie = None
+        tvmaze_show = None
+        tvmaze_episode = None
+
+        if media_info.is_movie:
+            omdb_movie = await self.omdb_client.find_best_match(
+                media_info.title or "", media_info.year
+            )
+        elif media_info.is_episode:
+            tvmaze_show = await self.tvmaze_client.find_best_match(
+                media_info.show_name or "", media_info.year
+            )
+            if tvmaze_show and media_info.season is not None and media_info.episode is not None:
+                tvmaze_episode = await self.tvmaze_client.get_episode(
+                    tvmaze_show.tvmaze_id, media_info.season, media_info.episode
+                )
+
+        formatted = self.formatter.format(
+            media_info,
+            omdb_movie=omdb_movie,
+            tvmaze_show=tvmaze_show,
+            tvmaze_episode=tvmaze_episode,
+        )
+
+        if media_info.is_movie:
+            output_dir = self.config.directories.movies.output
+        else:
+            output_dir = self.config.directories.tv.output
+
+        return self._create_operation(
+            file_path, output_dir, formatted, media_info,
+            omdb_movie, tvmaze_show, tvmaze_episode,
+        )
+
+    async def preview_directory(
+        self, directory: Path, media_type: Literal["movie", "episode"]
+    ) -> tuple[list[RenameOperation], list]:
+        """Preview all renames in a directory without executing.
+
+        Returns (operations, duplicate_groups).
+        """
+        from .duplicates import DuplicateGroup as DupGroup
+
+        files = list(directory.rglob("*"))
+        video_files = [f for f in files if is_video_file(f)]
+        logger.info(f"Found {len(video_files)} video files in {directory}")
+
+        operations: list[RenameOperation] = []
+        media_infos: list[MediaInfo] = []
+
+        for file_path in video_files:
+            try:
+                op = await self.preview_file(file_path)
+                if op:
+                    operations.append(op)
+                    media_infos.append(op.media_info)
+
+                    # Set IDs for duplicate detection
+                    if op.media_info.is_movie and op.omdb_movie:
+                        op.media_info.tmdb_id = hash(op.omdb_movie.imdb_id)
+                    elif op.media_info.is_episode and op.tvmaze_show:
+                        op.media_info.tmdb_id = op.tvmaze_show.tvmaze_id
+            except Exception as e:
+                logger.error(f"Error previewing {file_path.name}: {e}")
+                continue
+
+        duplicate_groups = self.duplicate_handler.find_duplicates(media_infos)
+        return operations, duplicate_groups
+
+    async def execute_single(self, operation: RenameOperation) -> RenameResult:
+        """Execute a single pre-built rename operation."""
+        return await self._execute_operation(operation)
+
     async def scan_and_process(self) -> dict[str, list[RenameResult]]:
         """Scan all configured directories and process files.
 

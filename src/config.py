@@ -82,6 +82,14 @@ class NamingConfig(BaseModel):
     )
 
 
+class WebConfig(BaseModel):
+    """Web UI configuration."""
+
+    host: str = Field(default="0.0.0.0", description="Web server host")
+    port: int = Field(default=8080, description="Web server port")
+    data_dir: Path = Field(default=Path("/app/data"), description="Data directory for scan results")
+
+
 class Config(BaseModel):
     """Main application configuration."""
 
@@ -90,6 +98,7 @@ class Config(BaseModel):
     options: OptionsConfig = Field(default_factory=OptionsConfig)
     duplicates: DuplicatesConfig = Field(default_factory=DuplicatesConfig)
     naming: NamingConfig = Field(default_factory=NamingConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Config":

@@ -49,5 +49,8 @@ USER renamarr
 # Set Python to run unbuffered
 ENV PYTHONUNBUFFERED=1
 
-# Default command
-CMD ["python", "-m", "src.main"]
+# Expose web UI port
+EXPOSE 8080
+
+# Default command - web UI mode
+CMD ["python", "-m", "src.main", "--web"]

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Renamarr</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1><span>Renamarr</span> Media Renamer</h1>
+            <div class="header-actions">
+                <button class="btn btn-primary" id="btn-scan" onclick="triggerScan()">Scan Now</button>
+                <button class="btn btn-success" id="btn-execute" onclick="executeApproved()" disabled>Execute Approved</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="status-bar">
+            <div class="stat">
+                <span class="stat-label">Total:</span>
+                <span class="stat-value" id="stat-total">0</span>
+            </div>
+            <div class="stat stat-pending">
+                <span class="stat-label">Pending:</span>
+                <span class="stat-value" id="stat-pending">0</span>
+            </div>
+            <div class="stat stat-approved">
+                <span class="stat-label">Approved:</span>
+                <span class="stat-value" id="stat-approved">0</span>
+            </div>
+            <div class="stat stat-rejected">
+                <span class="stat-label">Rejected:</span>
+                <span class="stat-value" id="stat-rejected">0</span>
+            </div>
+            <div class="stat stat-completed">
+                <span class="stat-label">Completed:</span>
+                <span class="stat-value" id="stat-completed">0</span>
+            </div>
+            <div class="stat stat-correct">
+                <span class="stat-label">Already Correct:</span>
+                <span class="stat-value" id="stat-correct">0</span>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="files">Files <span class="tab-badge" id="badge-files">0</span></div>
+            <div class="tab" data-tab="duplicates">Duplicates <span class="tab-badge" id="badge-duplicates">0</span></div>
+            <div class="tab" data-tab="history">History</div>
+        </div>
+
+        <div class="tab-content active" id="tab-files">
+            <div class="empty-state"><p>No scan results yet. Click "Scan Now" to start.</p></div>
+        </div>
+
+        <div class="tab-content" id="tab-duplicates">
+            <div class="empty-state"><p>No scan results yet.</p></div>
+        </div>
+
+        <div class="tab-content" id="tab-history">
+            <div class="empty-state"><p>No scan history.</p></div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -172,6 +172,11 @@ def parse_args() -> argparse.Namespace:
         help="Run a single scan and exit (don't watch)",
     )
     parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Start web UI mode",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose logging",
@@ -214,7 +219,14 @@ async def async_main(args: argparse.Namespace) -> int:
 
     # Run the application
     try:
-        if args.once:
+        if args.web:
+            import uvicorn
+            from .web.app import create_app
+
+            web_app = create_app(config, config.web.data_dir)
+            logger.info(f"Starting web UI on {config.web.host}:{config.web.port}")
+            uvicorn.run(web_app, host=config.web.host, port=config.web.port, log_level="info")
+        elif args.once:
             await app.run_once()
         else:
             await app.start()
