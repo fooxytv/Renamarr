@@ -79,6 +79,8 @@ class RenamarrWeb:
         self.config = config
         self.store = ScanStore(data_dir)
         self.scanning = False
+        self._shutting_down = False
+        self._scan_task: asyncio.Task | None = None
         self._scan_lock = asyncio.Lock()
         self._omdb_client: OMDbClient | None = None
         self._tvmaze_client: TVMazeClient | None = None
@@ -153,7 +155,22 @@ class RenamarrWeb:
         )
 
     async def shutdown(self) -> None:
-        """Clean up API clients."""
+        """Clean up API clients. Waits for any running scan to finish first."""
+        self._shutting_down = True
+
+        # Wait for scan to complete before closing clients
+        if self._scan_task and not self._scan_task.done():
+            logger.info("Waiting for scan to complete before shutdown...")
+            try:
+                await asyncio.wait_for(self._scan_task, timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning("Scan did not complete in 30s, cancelling")
+                self._scan_task.cancel()
+                try:
+                    await self._scan_task
+                except asyncio.CancelledError:
+                    pass
+
         if self._omdb_client:
             await self._omdb_client.__aexit__(None, None, None)
         if self._tvmaze_client:
@@ -526,7 +543,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         if web.scanning:
             raise HTTPException(409, "Scan already in progress")
         web.scanning = True
-        asyncio.create_task(web.run_scan())
+        web._scan_task = asyncio.create_task(web.run_scan())
         return {"message": "Scan started"}
 
     @app.get("/api/scan/current", dependencies=[Depends(_verify_api_key)])
