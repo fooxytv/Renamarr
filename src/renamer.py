@@ -316,29 +316,35 @@ class RenamerService:
         # First pass: parse all files and look up metadata
         media_infos: list[MediaInfo] = []
         for file_path in video_files:
-            media_info = parse_media_file(file_path)
-            if not media_info.media_type:
-                logger.warning(f"Could not determine media type for: {file_path}")
+            try:
+                media_info = parse_media_file(file_path)
+                if not media_info.media_type:
+                    logger.warning(f"Could not determine media type for: {file_path}")
+                    continue
+
+                # Look up metadata to get consistent IDs for duplicate detection
+                if media_info.is_movie:
+                    omdb_movie = await self.omdb_client.find_best_match(
+                        media_info.title or "", media_info.year
+                    )
+                    if omdb_movie:
+                        # Use IMDb ID for duplicate detection
+                        media_info.tmdb_id = hash(omdb_movie.imdb_id)  # Use hash as numeric ID
+                        logger.info(f"Parsed: {file_path.name} -> movie: {omdb_movie.title} ({omdb_movie.year}) [{media_info.quality.resolution or 'unknown'}]")
+                elif media_info.is_episode:
+                    tvmaze_show = await self.tvmaze_client.find_best_match(
+                        media_info.show_name or "", media_info.year
+                    )
+                    if tvmaze_show:
+                        media_info.tmdb_id = tvmaze_show.tvmaze_id
+                        season = media_info.season or 0
+                        episode = media_info.episode or 0
+                        logger.info(f"Parsed: {file_path.name} -> episode: {tvmaze_show.name} S{season:02d}E{episode:02d} [{media_info.quality.resolution or 'unknown'}]")
+
+                media_infos.append(media_info)
+            except Exception as e:
+                logger.error(f"Error processing {file_path.name}: {e}")
                 continue
-
-            # Look up metadata to get consistent IDs for duplicate detection
-            if media_info.is_movie:
-                omdb_movie = await self.omdb_client.find_best_match(
-                    media_info.title or "", media_info.year
-                )
-                if omdb_movie:
-                    # Use IMDb ID for duplicate detection
-                    media_info.tmdb_id = hash(omdb_movie.imdb_id)  # Use hash as numeric ID
-                    logger.info(f"Parsed: {file_path.name} -> movie: {omdb_movie.title} ({omdb_movie.year}) [{media_info.quality.resolution or 'unknown'}]")
-            elif media_info.is_episode:
-                tvmaze_show = await self.tvmaze_client.find_best_match(
-                    media_info.show_name or "", media_info.year
-                )
-                if tvmaze_show:
-                    media_info.tmdb_id = tvmaze_show.tvmaze_id
-                    logger.info(f"Parsed: {file_path.name} -> episode: {tvmaze_show.name} S{media_info.season:02d}E{media_info.episode:02d} [{media_info.quality.resolution or 'unknown'}]")
-
-            media_infos.append(media_info)
 
         # Second pass: detect and resolve duplicates
         duplicate_groups = self.duplicate_handler.find_duplicates(media_infos)
@@ -357,9 +363,13 @@ class RenamerService:
         for media_info in media_infos:
             if media_info.path in files_to_skip:
                 continue
-            result = await self.process_file(media_info.path)
-            if result:
-                results.append(result)
+            try:
+                result = await self.process_file(media_info.path)
+                if result:
+                    results.append(result)
+            except Exception as e:
+                logger.error(f"Error renaming {media_info.path.name}: {e}")
+                continue
 
         return results
 
