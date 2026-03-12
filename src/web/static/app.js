@@ -94,7 +94,8 @@ async function loadScan() {
             return;
         }
 
-        if (scan.status === 'running') {
+        const status = await refreshStatus();
+        if (scan.status === 'running' && status.scanning) {
             document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning your media library...</p></div>';
             document.getElementById('tab-duplicates').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning...</p></div>';
             return;
@@ -107,7 +108,6 @@ async function loadScan() {
         showEmpty('files', 'No scan results yet. Click "Scan Now" to start.');
         showEmpty('duplicates', 'No scan results yet.');
     }
-    await refreshStatus();
 }
 
 function showEmpty(tab, message) {
