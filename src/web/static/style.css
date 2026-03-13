@@ -172,6 +172,26 @@ header h1 span {
     margin-right: 4px;
 }
 
+.search-box {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    width: 220px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-box:focus {
+    border-color: var(--blue);
+}
+
+.search-box::placeholder {
+    color: var(--text-dim);
+}
+
 .filter-btn {
     padding: 4px 12px;
     border: 1px solid var(--border);

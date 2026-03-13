@@ -3,6 +3,7 @@ let currentFilter = 'all';
 let currentTypeFilter = 'all';
 let currentTab = 'files';
 let currentView = localStorage.getItem('renamarr_view') || 'cards';
+let searchQuery = '';
 let pollInterval = null;
 let apiKey = localStorage.getItem('renamarr_api_key') || '';
 let cachedFiles = [];
@@ -138,6 +139,7 @@ function buildToolbar(files, typeFiltered) {
     const tvCount = files.filter(f => f.media_type === 'episode').length;
 
     let html = '<div class="toolbar">';
+    html += '<input type="text" class="search-box" placeholder="Search files..." value="' + esc(searchQuery) + '" oninput="setSearch(this.value)">';
     html += '<div class="filter-group">';
     html += '<span class="filter-label">Type:</span>';
     [['all', 'All (' + files.length + ')'], ['movie', 'Movies (' + movieCount + ')'], ['episode', 'TV (' + tvCount + ')']].forEach(([key, label]) => {
@@ -272,7 +274,15 @@ function renderTable(filtered) {
 function renderFiles(files) {
     cachedFiles = files;
     const typeFiltered = currentTypeFilter === 'all' ? files : files.filter(f => f.media_type === currentTypeFilter);
-    const filtered = currentFilter === 'all' ? typeFiltered : typeFiltered.filter(f => f.status === currentFilter);
+    let filtered = currentFilter === 'all' ? typeFiltered : typeFiltered.filter(f => f.status === currentFilter);
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        filtered = filtered.filter(f =>
+            (f.source_filename && f.source_filename.toLowerCase().includes(q)) ||
+            (f.destination_filename && f.destination_filename.toLowerCase().includes(q)) ||
+            (f.title && f.title.toLowerCase().includes(q))
+        );
+    }
 
     let html = buildToolbar(files, typeFiltered);
 
@@ -410,6 +420,11 @@ async function executeApproved() {
     const result = await api('POST', '/api/execute');
     alert('Done! ' + result.completed + ' renamed, ' + result.failed + ' failed.');
     await loadScan();
+}
+
+function setSearch(q) {
+    searchQuery = q;
+    renderFiles(cachedFiles);
 }
 
 function setFilter(f) {
