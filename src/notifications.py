@@ -161,9 +161,10 @@ class DiscordNotifier:
         moved_files: int,
         failed: int,
         errors: list[str] | None = None,
+        renamed: int = 0,
     ) -> None:
-        """Notify that library folder merges have been executed."""
-        if merged == 0 and failed == 0:
+        """Notify that library folder merges/renames have been executed."""
+        if merged == 0 and failed == 0 and renamed == 0:
             return
 
         color = 3066993 if failed == 0 else 15158332
@@ -172,6 +173,7 @@ class DiscordNotifier:
             "color": color,
             "fields": [
                 {"name": "Folders Merged", "value": str(merged), "inline": True},
+                {"name": "Folders Renamed", "value": str(renamed), "inline": True},
                 {"name": "Files Moved", "value": str(moved_files), "inline": True},
                 {"name": "Failed", "value": str(failed), "inline": True},
             ],

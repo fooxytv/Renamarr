@@ -66,6 +66,23 @@ class FolderMergePreview(BaseModel):
     error: str | None = None
 
 
+class FolderRenamePreview(BaseModel):
+    """A proposal to rename a misnamed library folder."""
+
+    id: str
+    current_path: str
+    current_name: str
+    proposed_name: str
+    title: str | None = None
+    year: int | None = None
+    media_type: str = "movie"
+    file_count: int = 0
+    total_size: int = 0
+    total_size_human: str = ""
+    status: str = "pending"  # pending | approved | skipped | completed | failed
+    error: str | None = None
+
+
 class LibraryScanResult(BaseModel):
     """Result of a library dedup scan."""
 
@@ -74,6 +91,7 @@ class LibraryScanResult(BaseModel):
     completed_at: str | None = None
     status: str = "running"  # running | completed | failed
     groups: list[FolderMergePreview] = []
+    folder_renames: list[FolderRenamePreview] = []
     error: str | None = None
 
 

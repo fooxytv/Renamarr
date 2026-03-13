@@ -20,7 +20,7 @@ from .. import __version__
 from ..auth import get_api_key, get_passphrase, verify_code
 from ..config import Config
 from ..duplicates import DuplicateHandler
-from ..library_dedup import LibraryDeduplicator
+from ..library_dedup import LibraryDeduplicator, LibraryFolderScanner
 from ..formatter import PlexFormatter
 from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
@@ -31,6 +31,7 @@ from .models import (
     DuplicateGroupPreview,
     FilePreview,
     FolderMergePreview,
+    FolderRenamePreview,
     LibraryScanResult,
     ScanResult,
     StatusResponse,
@@ -542,10 +543,80 @@ class RenamarrWeb:
                         media_type="tv",
                     ))
 
+            # Scan for misnamed folders
+            folder_scanner = LibraryFolderScanner()
+            all_renames: list[FolderRenamePreview] = []
+
+            if movies_output.exists():
+                logger.info(f"Library scan: checking movie folder names at {movies_output}")
+                proposals = folder_scanner.find_misnamed_folders(movies_output, "movie")
+                for p in proposals:
+                    # Look up correct title via OMDb
+                    if self._omdb_client and p.title:
+                        try:
+                            result = await self._omdb_client.find_best_match(p.title, p.year)
+                            if result:
+                                from ..utils import sanitize_filename as _sanitize
+                                clean_title = _sanitize(result.title)
+                                year = result.year or p.year
+                                p.proposed_name = f"{clean_title} ({year})" if year else clean_title
+                                p.title = result.title
+                                p.year = year
+                        except Exception as e:
+                            logger.debug(f"OMDb lookup failed for '{p.title}': {e}")
+
+                    # Skip if proposed name matches current name
+                    if p.proposed_name and p.proposed_name != p.current_name:
+                        all_renames.append(FolderRenamePreview(
+                            id=str(uuid.uuid4()),
+                            current_path=str(p.current_path),
+                            current_name=p.current_name,
+                            proposed_name=p.proposed_name,
+                            title=p.title,
+                            year=p.year,
+                            media_type="movie",
+                            file_count=p.file_count,
+                            total_size=p.total_size,
+                            total_size_human=format_size(p.total_size),
+                        ))
+
+            if tv_output.exists():
+                logger.info(f"Library scan: checking TV folder names at {tv_output}")
+                proposals = folder_scanner.find_misnamed_folders(tv_output, "tv")
+                for p in proposals:
+                    # Look up correct title via TVMaze
+                    if self._tvmaze_client and p.title:
+                        try:
+                            result = await self._tvmaze_client.find_best_match(p.title, p.year)
+                            if result:
+                                from ..utils import sanitize_filename as _sanitize
+                                p.proposed_name = _sanitize(result.name)
+                                p.title = result.name
+                        except Exception as e:
+                            logger.debug(f"TVMaze lookup failed for '{p.title}': {e}")
+
+                    if p.proposed_name and p.proposed_name != p.current_name:
+                        all_renames.append(FolderRenamePreview(
+                            id=str(uuid.uuid4()),
+                            current_path=str(p.current_path),
+                            current_name=p.current_name,
+                            proposed_name=p.proposed_name,
+                            title=p.title,
+                            year=p.year,
+                            media_type="tv",
+                            file_count=p.file_count,
+                            total_size=p.total_size,
+                            total_size_human=format_size(p.total_size),
+                        ))
+
             scan.groups = all_groups
+            scan.folder_renames = all_renames
             scan.status = "completed"
             scan.completed_at = datetime.now().isoformat()
-            logger.info(f"Library scan complete: {len(all_groups)} duplicate folder groups")
+            logger.info(
+                f"Library scan complete: {len(all_groups)} duplicate folder groups, "
+                f"{len(all_renames)} misnamed folders"
+            )
 
         except Exception as e:
             logger.error(f"Library scan failed: {e}", exc_info=True)
@@ -557,14 +628,15 @@ class RenamarrWeb:
         self.scanning = False
 
     async def execute_library_merges(self) -> dict:
-        """Execute all approved folder merges."""
+        """Execute all approved folder merges and folder renames."""
         scan = self.store.load_library_scan()
         if not scan:
             return {"error": "No library scan results"}
 
         dedup = LibraryDeduplicator()
-        results = {"merged": 0, "moved_files": 0, "failed": 0, "errors": []}
+        results = {"merged": 0, "moved_files": 0, "renamed": 0, "failed": 0, "errors": []}
 
+        # Execute folder merges
         for group in scan.groups:
             if group.status != "approved":
                 continue
@@ -590,6 +662,23 @@ class RenamarrWeb:
 
             results["moved_files"] += group_moved
 
+        # Execute folder renames
+        for rename in scan.folder_renames:
+            if rename.status != "approved":
+                continue
+
+            current = Path(rename.current_path)
+            success = LibraryFolderScanner.execute_folder_rename(
+                current, rename.proposed_name
+            )
+            if success:
+                rename.status = "completed"
+                results["renamed"] += 1
+            else:
+                rename.status = "failed"
+                results["failed"] += 1
+                results["errors"].append(f"Failed to rename: {rename.current_name}")
+
         self.store.save_library_scan(scan)
 
         # Send Discord notification
@@ -598,6 +687,7 @@ class RenamarrWeb:
             moved_files=results["moved_files"],
             failed=results["failed"],
             errors=results.get("errors"),
+            renamed=results["renamed"],
         )
 
         return results
@@ -804,6 +894,49 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
     async def approve_all_merge_groups():
         count = web.store.update_all_merge_groups("pending", "approved")
         return {"approved": count}
+
+    @app.post("/api/library/renames/{rename_id}/approve", dependencies=[Depends(_verify_api_key)])
+    async def approve_folder_rename(rename_id: str):
+        if not web.store.update_folder_rename_status(rename_id, "approved"):
+            raise HTTPException(404, "Rename not found")
+        return {"status": "approved"}
+
+    @app.post("/api/library/renames/{rename_id}/skip", dependencies=[Depends(_verify_api_key)])
+    async def skip_folder_rename(rename_id: str):
+        if not web.store.update_folder_rename_status(rename_id, "skipped"):
+            raise HTTPException(404, "Rename not found")
+        return {"status": "skipped"}
+
+    @app.post("/api/library/renames/{rename_id}/pending", dependencies=[Depends(_verify_api_key)])
+    async def reset_folder_rename(rename_id: str):
+        if not web.store.update_folder_rename_status(rename_id, "pending"):
+            raise HTTPException(404, "Rename not found")
+        return {"status": "pending"}
+
+    @app.post("/api/library/renames/approve-all", dependencies=[Depends(_verify_api_key)])
+    async def approve_all_folder_renames():
+        scan = web.store.load_library_scan()
+        if not scan:
+            return {"approved": 0}
+        count = 0
+        for rename in scan.folder_renames:
+            if rename.status == "pending":
+                rename.status = "approved"
+                count += 1
+        web.store.save_library_scan(scan)
+        return {"approved": count}
+
+    @app.post("/api/library/renames/{rename_id}/edit", dependencies=[Depends(_verify_api_key)])
+    async def edit_folder_rename(rename_id: str, request: Request):
+        body = await request.json()
+        new_name = body.get("proposed_name", "").strip()
+        if not new_name:
+            raise HTTPException(400, "proposed_name is required")
+        if "/" in new_name or "\\" in new_name or ".." in new_name:
+            raise HTTPException(400, "Invalid folder name")
+        if not web.store.update_folder_rename_proposed_name(rename_id, new_name):
+            raise HTTPException(404, "Rename not found")
+        return {"proposed_name": new_name}
 
     @app.post("/api/library/execute", dependencies=[Depends(_verify_api_key)])
     async def execute_library_merges():

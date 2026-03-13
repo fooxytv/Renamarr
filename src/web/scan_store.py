@@ -138,6 +138,30 @@ class ScanStore:
         self.save_library_scan(scan)
         return count
 
+    def update_folder_rename_status(self, rename_id: str, status: str) -> bool:
+        """Update the status of a single folder rename."""
+        scan = self.load_library_scan()
+        if not scan:
+            return False
+        for rename in scan.folder_renames:
+            if rename.id == rename_id:
+                rename.status = status
+                self.save_library_scan(scan)
+                return True
+        return False
+
+    def update_folder_rename_proposed_name(self, rename_id: str, name: str) -> bool:
+        """Update the proposed name for a folder rename."""
+        scan = self.load_library_scan()
+        if not scan:
+            return False
+        for rename in scan.folder_renames:
+            if rename.id == rename_id:
+                rename.proposed_name = name
+                self.save_library_scan(scan)
+                return True
+        return False
+
     def save_operations(self, operations: dict) -> None:
         """Save serialized operations map to disk.
 

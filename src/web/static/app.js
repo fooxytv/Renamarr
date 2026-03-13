@@ -536,14 +536,15 @@ async function loadLibraryScan() {
 
         const status = await refreshStatus();
         if (scan.status === 'running' && status.scanning) {
-            document.getElementById('tab-library').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning library for duplicate folders...</p></div>';
+            document.getElementById('tab-library').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning library for duplicate folders and misnamed directories...</p></div>';
             startLibraryPolling();
             return;
         }
 
         stopLibraryPolling();
-        document.getElementById('badge-library').textContent = scan.groups.length;
-        renderLibraryGroups(scan.groups);
+        const totalIssues = (scan.groups || []).length + (scan.folder_renames || []).length;
+        document.getElementById('badge-library').textContent = totalIssues;
+        renderLibrary(scan);
     } catch (e) {
         showLibraryEmpty();
     }
@@ -557,66 +558,112 @@ function showLibraryEmpty() {
         '<div class="empty-state"><p>No library scan results. Click "Scan Library for Duplicates" to find case-insensitive duplicate folders.</p></div>';
 }
 
-function renderLibraryGroups(groups) {
-    const pending = groups.filter(g => g.status === 'pending').length;
-    const approved = groups.filter(g => g.status === 'approved').length;
+function renderLibrary(scan) {
+    const groups = scan.groups || [];
+    const renames = scan.folder_renames || [];
+    const allApproved = groups.filter(g => g.status === 'approved').length
+        + renames.filter(r => r.status === 'approved').length;
+    const totalIssues = groups.length + renames.length;
 
     let html = '<div class="toolbar">';
     html += '<div class="filter-group">';
-    html += '<span class="filter-label">' + groups.length + ' duplicate folder groups</span>';
+    html += '<span class="filter-label">' + groups.length + ' duplicate groups, ' + renames.length + ' misnamed folders</span>';
     html += '</div>';
     html += '<div class="toolbar-spacer"></div>';
     html += '<button class="btn btn-primary btn-sm" onclick="triggerLibraryScan()">Re-scan</button> ';
     html += '<button class="btn btn-success btn-sm" onclick="approveAllLibrary()">Approve All</button> ';
-    html += '<button class="btn btn-primary btn-sm" onclick="executeLibrary()"' + (approved === 0 ? ' disabled' : '') + '>Execute Merges (' + approved + ')</button>';
+    html += '<button class="btn btn-primary btn-sm" onclick="executeLibrary()"' + (allApproved === 0 ? ' disabled' : '') + '>Execute (' + allApproved + ')</button>';
     html += '</div>';
 
-    if (groups.length === 0) {
-        html += '<div class="empty-state"><p>No duplicate folders found. Your library is clean!</p></div>';
+    if (totalIssues === 0) {
+        html += '<div class="empty-state"><p>No issues found. Your library is clean!</p></div>';
         document.getElementById('tab-library').innerHTML = html;
         return;
     }
 
-    for (const g of groups) {
-        html += '<div class="merge-group">';
-        html += '<div class="merge-header">';
-        html += '<span class="badge badge-' + g.status + '">' + g.status + '</span>';
-        html += '<span class="merge-type badge card-type-' + g.media_type + '">' + (g.media_type === 'movie' ? 'Movie' : 'TV') + '</span>';
-        html += '<h3>' + esc(g.canonical_name) + '</h3>';
-        html += '</div>';
+    // Render misnamed folders first
+    if (renames.length > 0) {
+        html += '<h2 class="library-section-title">Misnamed Folders</h2>';
+        for (const r of renames) {
+            html += '<div class="merge-group">';
+            html += '<div class="merge-header">';
+            html += '<span class="badge badge-' + r.status + '">' + r.status + '</span>';
+            html += '<span class="merge-type badge card-type-' + r.media_type + '">' + (r.media_type === 'movie' ? 'Movie' : 'TV') + '</span>';
+            if (r.title) {
+                html += '<h3>' + esc(r.title) + (r.year ? ' (' + r.year + ')' : '') + '</h3>';
+            }
+            html += '</div>';
 
-        html += '<div class="merge-details">';
-        html += '<div class="merge-folder merge-canonical">';
-        html += '<span class="dup-best-tag">KEEP</span> ';
-        html += '<span class="merge-path" title="' + esc(g.canonical_path) + '">' + esc(g.canonical_path) + '</span>';
-        html += '<span class="merge-stats">' + g.canonical_file_count + ' files, ' + g.canonical_size_human + '</span>';
-        html += '</div>';
-
-        for (let i = 0; i < g.duplicate_paths.length; i++) {
+            html += '<div class="merge-details">';
             html += '<div class="merge-folder merge-duplicate">';
-            html += '<span class="badge badge-rejected">MERGE</span> ';
-            html += '<span class="merge-path" title="' + esc(g.duplicate_paths[i]) + '">' + esc(g.duplicate_paths[i]) + '</span>';
+            html += '<span class="badge badge-rejected">CURRENT</span> ';
+            html += '<span class="merge-path" title="' + esc(r.current_path) + '">' + esc(r.current_name) + '</span>';
+            html += '<span class="merge-stats">' + r.file_count + ' files, ' + r.total_size_human + '</span>';
+            html += '</div>';
+            html += '<div class="merge-folder merge-canonical">';
+            html += '<span class="dup-best-tag">RENAME TO</span> ';
+            html += '<span class="merge-path">' + esc(r.proposed_name) + '</span>';
+            html += '</div>';
+            html += '</div>';
+
+            html += '<div class="merge-actions">';
+            if (r.status === 'pending') {
+                html += '<button class="btn btn-success btn-sm" onclick="approveFolderRename(\'' + r.id + '\')">Approve</button> ';
+                html += '<button class="btn btn-outline btn-sm" onclick="skipFolderRename(\'' + r.id + '\')">Skip</button> ';
+                html += '<button class="btn btn-outline btn-sm" onclick="editFolderRename(\'' + r.id + '\', \'' + esc(r.proposed_name) + '\')">Edit Name</button>';
+            } else if (r.status === 'approved' || r.status === 'skipped') {
+                html += '<button class="btn btn-outline btn-sm" onclick="resetFolderRename(\'' + r.id + '\')">Undo</button>';
+            }
+            html += '</div>';
+
             html += '</div>';
         }
+    }
 
-        html += '<div class="merge-summary">';
-        html += g.duplicate_file_count + ' files (' + g.duplicate_size_human + ') to merge';
-        if (g.conflicts > 0) {
-            html += ' &middot; <span style="color:var(--yellow)">' + g.conflicts + ' filename conflicts (will be auto-renamed)</span>';
+    // Render duplicate folder groups
+    if (groups.length > 0) {
+        html += '<h2 class="library-section-title">Duplicate Folders</h2>';
+        for (const g of groups) {
+            html += '<div class="merge-group">';
+            html += '<div class="merge-header">';
+            html += '<span class="badge badge-' + g.status + '">' + g.status + '</span>';
+            html += '<span class="merge-type badge card-type-' + g.media_type + '">' + (g.media_type === 'movie' ? 'Movie' : 'TV') + '</span>';
+            html += '<h3>' + esc(g.canonical_name) + '</h3>';
+            html += '</div>';
+
+            html += '<div class="merge-details">';
+            html += '<div class="merge-folder merge-canonical">';
+            html += '<span class="dup-best-tag">KEEP</span> ';
+            html += '<span class="merge-path" title="' + esc(g.canonical_path) + '">' + esc(g.canonical_path) + '</span>';
+            html += '<span class="merge-stats">' + g.canonical_file_count + ' files, ' + g.canonical_size_human + '</span>';
+            html += '</div>';
+
+            for (let i = 0; i < g.duplicate_paths.length; i++) {
+                html += '<div class="merge-folder merge-duplicate">';
+                html += '<span class="badge badge-rejected">MERGE</span> ';
+                html += '<span class="merge-path" title="' + esc(g.duplicate_paths[i]) + '">' + esc(g.duplicate_paths[i]) + '</span>';
+                html += '</div>';
+            }
+
+            html += '<div class="merge-summary">';
+            html += g.duplicate_file_count + ' files (' + g.duplicate_size_human + ') to merge';
+            if (g.conflicts > 0) {
+                html += ' &middot; <span style="color:var(--yellow)">' + g.conflicts + ' filename conflicts (will be auto-renamed)</span>';
+            }
+            html += '</div>';
+            html += '</div>';
+
+            html += '<div class="merge-actions">';
+            if (g.status === 'pending') {
+                html += '<button class="btn btn-success btn-sm" onclick="approveLibraryGroup(\'' + g.id + '\')">Approve</button> ';
+                html += '<button class="btn btn-outline btn-sm" onclick="skipLibraryGroup(\'' + g.id + '\')">Skip</button>';
+            } else if (g.status === 'approved' || g.status === 'skipped') {
+                html += '<button class="btn btn-outline btn-sm" onclick="resetLibraryGroup(\'' + g.id + '\')">Undo</button>';
+            }
+            html += '</div>';
+
+            html += '</div>';
         }
-        html += '</div>';
-        html += '</div>';
-
-        html += '<div class="merge-actions">';
-        if (g.status === 'pending') {
-            html += '<button class="btn btn-success btn-sm" onclick="approveLibraryGroup(\'' + g.id + '\')">Approve</button> ';
-            html += '<button class="btn btn-outline btn-sm" onclick="skipLibraryGroup(\'' + g.id + '\')">Skip</button>';
-        } else if (g.status === 'approved' || g.status === 'skipped') {
-            html += '<button class="btn btn-outline btn-sm" onclick="resetLibraryGroup(\'' + g.id + '\')">Undo</button>';
-        }
-        html += '</div>';
-
-        html += '</div>';
     }
 
     document.getElementById('tab-library').innerHTML = html;
@@ -660,13 +707,41 @@ async function resetLibraryGroup(id) {
 
 async function approveAllLibrary() {
     await api('POST', '/api/library/groups/approve-all');
+    await api('POST', '/api/library/renames/approve-all');
+    await loadLibraryScan();
+}
+
+async function approveFolderRename(id) {
+    await api('POST', '/api/library/renames/' + id + '/approve');
+    await loadLibraryScan();
+}
+
+async function skipFolderRename(id) {
+    await api('POST', '/api/library/renames/' + id + '/skip');
+    await loadLibraryScan();
+}
+
+async function resetFolderRename(id) {
+    await api('POST', '/api/library/renames/' + id + '/pending');
+    await loadLibraryScan();
+}
+
+async function editFolderRename(id, currentName) {
+    const newName = prompt('Enter the correct folder name:', currentName);
+    if (!newName || newName.trim() === currentName) return;
+    await api('POST', '/api/library/renames/' + id + '/edit', { proposed_name: newName.trim() });
     await loadLibraryScan();
 }
 
 async function executeLibrary() {
-    if (!confirm('This will merge all approved duplicate folders. Continue?')) return;
+    if (!confirm('This will execute all approved folder merges and renames. Continue?')) return;
     const result = await api('POST', '/api/library/execute');
-    alert('Done! ' + result.merged + ' folder groups merged, ' + result.moved_files + ' files moved.');
+    let msg = 'Done!';
+    if (result.merged > 0) msg += ' ' + result.merged + ' merged.';
+    if (result.renamed > 0) msg += ' ' + result.renamed + ' renamed.';
+    if (result.moved_files > 0) msg += ' ' + result.moved_files + ' files moved.';
+    if (result.failed > 0) msg += ' ' + result.failed + ' failed.';
+    alert(msg);
     await loadLibraryScan();
 }
 

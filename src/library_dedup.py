@@ -1,15 +1,19 @@
-"""Library folder deduplication.
+"""Library folder deduplication and cleanup.
 
-Scans output/library directories for case-insensitive duplicate folders
-and merges them into a single canonical folder.
+Scans output/library directories for:
+- Case-insensitive duplicate folders (merge them)
+- Incorrectly named folders (scene names, missing formatting)
 """
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .utils import cleanup_empty_directories, get_unique_path
+from guessit import guessit
+
+from .utils import cleanup_empty_directories, get_unique_path, sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -216,3 +220,176 @@ class LibraryDeduplicator:
             logger.warning(f"Could not remove {duplicate}: {e}")
 
         return result
+
+
+# Plex naming pattern: "Title (Year)" for movies, "Show Name" for TV
+PLEX_MOVIE_PATTERN = re.compile(r"^.+ \(\d{4}\)$")
+
+# Indicators of a scene/unformatted folder name
+SCENE_INDICATORS = re.compile(
+    r"\b(1080[pi]|2160p|720p|480p|WEB[-.]?DL|WEB[-.]?Rip|BluRay|BDRip|HDRip|"
+    r"DVDRip|HDTV|x264|x265|H\.?264|H\.?265|HEVC|AAC|DD[+P]?5\.1|DTS|FLAC|"
+    r"AMZN|NF|DSNP|HMAX|ATVP|PMTP|WEB|Remux|PROPER|REPACK)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class FolderRenameProposal:
+    """A proposal to rename a misnamed library folder."""
+
+    current_path: Path
+    current_name: str
+    proposed_name: str | None = None
+    title: str | None = None
+    year: int | None = None
+    media_type: str = "movie"  # "movie" or "tv"
+    file_count: int = 0
+    total_size: int = 0
+
+
+class LibraryFolderScanner:
+    """Scans library folders for incorrectly named directories."""
+
+    def find_misnamed_folders(
+        self, root: Path, media_type: str
+    ) -> list[FolderRenameProposal]:
+        """Find folders that don't match Plex naming conventions.
+
+        Args:
+            root: Library root (e.g. /media/movies)
+            media_type: "movie" or "tv"
+
+        Returns:
+            List of folders that need renaming
+        """
+        if not root.exists() or not root.is_dir():
+            return []
+
+        proposals = []
+        try:
+            for child in sorted(root.iterdir()):
+                if not child.is_dir() or child.is_symlink():
+                    continue
+
+                if self._is_misnamed(child.name, media_type):
+                    proposal = self._create_proposal(child, media_type)
+                    if proposal:
+                        proposals.append(proposal)
+        except (PermissionError, OSError) as e:
+            logger.error(f"Error scanning {root}: {e}")
+
+        return proposals
+
+    def _is_misnamed(self, folder_name: str, media_type: str) -> bool:
+        """Check if a folder name doesn't match Plex conventions."""
+        if media_type == "movie":
+            # Good: "War of the Worlds (2025)"
+            # Bad: "war.of.the.worlds.2025.1080p.WEB-DL..."
+            if PLEX_MOVIE_PATTERN.match(folder_name):
+                return False
+            # Has scene indicators = definitely misnamed
+            if SCENE_INDICATORS.search(folder_name):
+                return True
+            # Contains dots as separators (scene naming)
+            if "." in folder_name and not folder_name.endswith(")"):
+                return True
+            return False
+        else:
+            # TV: check for scene indicators or dot-separated names
+            if SCENE_INDICATORS.search(folder_name):
+                return True
+            # Dot-separated scene style
+            dots = folder_name.count(".")
+            if dots >= 3:
+                return True
+            return False
+
+    def _create_proposal(
+        self, folder: Path, media_type: str
+    ) -> FolderRenameProposal | None:
+        """Create a rename proposal by parsing the folder name with guessit."""
+        try:
+            parsed = guessit(folder.name)
+        except Exception as e:
+            logger.warning(f"Could not parse folder name '{folder.name}': {e}")
+            return None
+
+        title = parsed.get("title")
+        year = parsed.get("year")
+
+        if not title:
+            return None
+
+        # Count files
+        file_count = 0
+        total_size = 0
+        try:
+            for item in folder.rglob("*"):
+                if item.is_file() and not item.is_symlink():
+                    file_count += 1
+                    try:
+                        total_size += item.stat().st_size
+                    except OSError:
+                        pass
+        except (PermissionError, OSError):
+            pass
+
+        proposal = FolderRenameProposal(
+            current_path=folder,
+            current_name=folder.name,
+            title=title,
+            year=year,
+            media_type=media_type,
+            file_count=file_count,
+            total_size=total_size,
+        )
+
+        # Generate proposed name from guessit (will be refined by API lookup)
+        if media_type == "movie":
+            clean_title = sanitize_filename(
+                title.title() if title == title.lower() else title
+            )
+            if year:
+                proposal.proposed_name = f"{clean_title} ({year})"
+            else:
+                proposal.proposed_name = clean_title
+        else:
+            clean_title = sanitize_filename(
+                title.title() if title == title.lower() else title
+            )
+            proposal.proposed_name = clean_title
+
+        return proposal
+
+    @staticmethod
+    def execute_folder_rename(current: Path, new_name: str) -> bool:
+        """Rename a folder in place.
+
+        Args:
+            current: Current folder path
+            new_name: New folder name (not full path)
+
+        Returns:
+            True if successful
+        """
+        if not current.exists():
+            logger.error(f"Folder not found: {current}")
+            return False
+
+        destination = current.parent / new_name
+
+        # Check for case-insensitive collision — merge into existing
+        if destination.exists() and destination != current:
+            logger.info(f"Merging '{current.name}' into existing '{new_name}'")
+            dedup = LibraryDeduplicator()
+            result = dedup.execute_merge(destination, current)
+            return result.failed == 0
+
+        try:
+            current.rename(destination)
+            logger.info(f"Renamed folder: {current.name} -> {new_name}")
+            return True
+        except OSError as e:
+            logger.error(f"Failed to rename folder {current}: {e}")
+            return False

@@ -649,6 +649,21 @@ header h1 span {
     border-radius: 3px;
 }
 
+.library-section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 20px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.library-section-title:first-of-type {
+    margin-top: 0;
+}
+
 /* Version footer */
 .version-footer {
     text-align: center;
