@@ -432,6 +432,70 @@ header .container {
     border-radius: 0 0 7px 0;
 }
 
+/* Alphabetical layout */
+.alpha-layout {
+    display: flex;
+    gap: 0;
+    position: relative;
+}
+
+.alpha-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.alpha-section {
+    scroll-margin-top: 80px;
+}
+
+.alpha-section-header {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--blue);
+    padding: 12px 0 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+    position: sticky;
+    top: 65px;
+    background: var(--bg);
+    z-index: 10;
+}
+
+.alpha-sidebar {
+    position: sticky;
+    top: 80px;
+    height: fit-content;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 4px;
+    margin-left: 8px;
+    flex-shrink: 0;
+    z-index: 20;
+}
+
+.alpha-link {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--blue);
+    text-decoration: none;
+    padding: 2px 6px;
+    border-radius: 3px;
+    line-height: 1.4;
+    transition: all 0.15s;
+    cursor: pointer;
+}
+
+.alpha-link:hover {
+    background: rgba(74,158,255,0.15);
+}
+
+.alpha-link-dim {
+    color: var(--text-dim);
+    opacity: 0.3;
+    cursor: default;
+}
+
 /* File table */
 .file-table {
     width: 100%;

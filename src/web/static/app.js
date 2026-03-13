@@ -4,6 +4,7 @@ let currentTypeFilter = 'all';
 let currentTab = 'files';
 let currentView = localStorage.getItem('renamarr_view') || 'cards';
 let searchQuery = '';
+let currentSort = localStorage.getItem('renamarr_sort') || 'default';
 let pollInterval = null;
 let apiKey = localStorage.getItem('renamarr_api_key') || '';
 let cachedFiles = [];
@@ -149,6 +150,10 @@ function buildToolbar(files, typeFiltered) {
     html += '</div>';
     html += '<div class="toolbar-spacer"></div>';
     html += '<div class="view-toggle">';
+    html += '<button class="view-toggle-btn' + (currentSort === 'default' ? ' active' : '') + '" onclick="setSort(\'default\')">Default</button>';
+    html += '<button class="view-toggle-btn' + (currentSort === 'alpha' ? ' active' : '') + '" onclick="setSort(\'alpha\')">A-Z</button>';
+    html += '</div>';
+    html += '<div class="view-toggle">';
     html += '<button class="view-toggle-btn' + (currentView === 'cards' ? ' active' : '') + '" onclick="setView(\'cards\')" title="Card view">Cards</button>';
     html += '<button class="view-toggle-btn' + (currentView === 'table' ? ' active' : '') + '" onclick="setView(\'table\')" title="Table view">Table</button>';
     html += '</div>';
@@ -293,10 +298,48 @@ function renderFiles(files) {
         );
     }
 
+    filtered = sortFiles(filtered);
+
     let html = buildToolbar(files, typeFiltered);
 
     if (filtered.length === 0) {
         html += '<div class="empty-state"><p>No files match this filter.</p></div>';
+    } else if (currentSort === 'alpha') {
+        // Build letter groups
+        const letters = [];
+        const groups = {};
+        for (const f of filtered) {
+            const letter = getLetterKey(f.title || f.source_filename);
+            if (!groups[letter]) { groups[letter] = []; letters.push(letter); }
+            groups[letter].push(f);
+        }
+
+        html += '<div class="alpha-layout">';
+        html += '<div class="alpha-content">';
+        for (const letter of letters) {
+            html += '<div class="alpha-section" id="alpha-' + letter + '">';
+            html += '<div class="alpha-section-header">' + letter + '</div>';
+            if (currentView === 'cards') {
+                html += renderCards(groups[letter]);
+            } else {
+                html += renderTable(groups[letter]);
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Alphabet sidebar
+        html += '<div class="alpha-sidebar">';
+        var allLetters = ['#'];
+        for (var c = 65; c <= 90; c++) allLetters.push(String.fromCharCode(c));
+        for (const l of allLetters) {
+            const hasFiles = !!groups[l];
+            html += '<a class="alpha-link' + (hasFiles ? '' : ' alpha-link-dim') + '" ' +
+                (hasFiles ? 'href="#alpha-' + l + '" onclick="scrollToLetter(\'' + l + '\'); return false;"' : '') +
+                '>' + l + '</a>';
+        }
+        html += '</div>';
+        html += '</div>';
     } else if (currentView === 'cards') {
         html += renderCards(filtered);
     } else {
@@ -304,6 +347,11 @@ function renderFiles(files) {
     }
 
     document.getElementById('tab-files').innerHTML = html;
+}
+
+function scrollToLetter(letter) {
+    const el = document.getElementById('alpha-' + letter);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // Render duplicates
@@ -555,6 +603,28 @@ async function executeApproved() {
 function setSearch(q) {
     searchQuery = q;
     renderFiles(cachedFiles);
+}
+
+function setSort(s) {
+    currentSort = s;
+    localStorage.setItem('renamarr_sort', s);
+    renderFiles(cachedFiles);
+}
+
+function getLetterKey(title) {
+    if (!title) return '#';
+    const first = title.trim().charAt(0).toUpperCase();
+    if (first >= 'A' && first <= 'Z') return first;
+    return '#';
+}
+
+function sortFiles(files) {
+    if (currentSort !== 'alpha') return files;
+    return [...files].sort((a, b) => {
+        const ta = (a.title || a.source_filename || '').toLowerCase();
+        const tb = (b.title || b.source_filename || '').toLowerCase();
+        return ta.localeCompare(tb);
+    });
 }
 
 function setFilter(f) {
