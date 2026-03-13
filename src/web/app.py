@@ -5,7 +5,7 @@ import hmac
 import logging
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +18,34 @@ from starlette.responses import Response
 
 from .. import __version__
 from ..auth import get_api_key, get_passphrase, verify_code
+
+
+class LogBuffer(logging.Handler):
+    """Ring buffer log handler that keeps recent log entries for the UI."""
+
+    def __init__(self, maxlen: int = 500):
+        super().__init__()
+        self.records: deque[dict] = deque(maxlen=maxlen)
+        self._counter = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._counter += 1
+        self.records.append({
+            "id": self._counter,
+            "time": datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        })
+
+    def get_logs(self, after: int = 0) -> list[dict]:
+        """Return log entries after the given ID."""
+        if after == 0:
+            return list(self.records)
+        return [r for r in self.records if r["id"] > after]
+
+
+log_buffer = LogBuffer()
 from ..config import Config
 from ..duplicates import DuplicateHandler
 from ..library_dedup import LibraryDeduplicator, LibraryFolderScanner
@@ -821,6 +849,11 @@ def _verify_delete_code(request: Request, x_delete_code: str = Header(default=""
 
 def create_app(config: Config, data_dir: Path) -> FastAPI:
     """Create the FastAPI application."""
+    # Attach log buffer to capture app logs for the activity panel
+    log_buffer.setLevel(logging.INFO)
+    log_buffer.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger("src").addHandler(log_buffer)
+
     web = RenamarrWeb(config, data_dir)
 
     @asynccontextmanager
@@ -895,6 +928,10 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         if not scan:
             raise HTTPException(404, "No scan results")
         return scan
+
+    @app.get("/api/logs", dependencies=[Depends(_verify_api_key)])
+    async def get_logs(after: int = 0):
+        return {"logs": log_buffer.get_logs(after)}
 
     @app.get("/api/history", dependencies=[Depends(_verify_api_key)])
     async def scan_history():

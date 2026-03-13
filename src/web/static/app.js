@@ -593,10 +593,21 @@ async function keepBest(bestId, rejectIds) {
 }
 
 async function executeApproved() {
-    if (!confirm('This will rename all approved files. Continue?')) return;
-    document.getElementById('btn-execute').disabled = true;
-    const result = await api('POST', '/api/execute');
-    alert('Done! ' + result.completed + ' renamed, ' + result.failed + ' failed.');
+    if (!confirm('This will rename approved files and move rejected files to trash. Continue?')) return;
+    const btn = document.getElementById('btn-execute');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-spinner"></span> Running...';
+    try {
+        const result = await api('POST', '/api/execute');
+        let msg = 'Done!';
+        if (result.completed > 0) msg += ' ' + result.completed + ' renamed.';
+        if (result.moved_to_trash > 0) msg += ' ' + result.moved_to_trash + ' moved to trash.';
+        if (result.failed > 0) msg += ' ' + result.failed + ' failed.';
+        alert(msg);
+    } catch (e) {
+        alert('Execute failed: ' + e.message);
+    }
+    btn.innerHTML = 'Run';
     await loadScan();
 }
 
@@ -1006,6 +1017,47 @@ async function editMetadata(id, currentTitle, currentYear) {
     }
 }
 
+// Activity log
+let activityPolling = null;
+let lastLogId = 0;
+let autoScroll = true;
+
+async function loadActivityLog() {
+    try {
+        const data = await api('GET', '/api/logs?after=' + lastLogId);
+        if (data.logs && data.logs.length > 0) {
+            const container = document.getElementById('activity-log');
+            if (!container) return;
+            for (const entry of data.logs) {
+                const line = document.createElement('div');
+                line.className = 'log-line log-' + entry.level.toLowerCase();
+                line.innerHTML = '<span class="log-time">' + entry.time + '</span>'
+                    + '<span class="log-level">' + entry.level + '</span>'
+                    + '<span class="log-msg">' + esc(entry.message) + '</span>';
+                container.appendChild(line);
+                lastLogId = entry.id;
+            }
+            // Keep buffer trimmed in DOM
+            while (container.children.length > 500) {
+                container.removeChild(container.firstChild);
+            }
+            if (autoScroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+    } catch (e) { /* ignore */ }
+}
+
+function startActivityPolling() {
+    if (activityPolling) return;
+    loadActivityLog();
+    activityPolling = setInterval(loadActivityLog, 2000);
+}
+
+function stopActivityPolling() {
+    if (activityPolling) { clearInterval(activityPolling); activityPolling = null; }
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.tab').forEach(t => {
@@ -1014,6 +1066,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (t.dataset.tab === 'history') loadHistory();
             if (t.dataset.tab === 'trash') loadTrash();
             if (t.dataset.tab === 'library') loadLibraryScan();
+            if (t.dataset.tab === 'activity') startActivityPolling();
+            else stopActivityPolling();
         });
     });
 

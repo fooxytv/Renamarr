@@ -13,7 +13,7 @@
             <div class="header-actions">
                 <button class="btn btn-primary" id="btn-scan" onclick="triggerScan()">Scan Now</button>
                 <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" style="display:none">Cancel Scan</button>
-                <button class="btn btn-success" id="btn-execute" onclick="executeApproved()" disabled>Execute Approved</button>
+                <button class="btn btn-success" id="btn-execute" onclick="executeApproved()" disabled>Run</button>
             </div>
         </div>
     </header>
@@ -51,6 +51,7 @@
             <div class="tab" data-tab="duplicates">Duplicates <span class="tab-badge" id="badge-duplicates">0</span></div>
             <div class="tab" data-tab="trash">Trash <span class="tab-badge" id="badge-trash">0</span></div>
             <div class="tab" data-tab="library">Library <span class="tab-badge" id="badge-library">0</span></div>
+            <div class="tab" data-tab="activity">Activity</div>
             <div class="tab" data-tab="history">History</div>
         </div>
 
@@ -68,6 +69,10 @@
 
         <div class="tab-content" id="tab-library">
             <div class="empty-state"><p>Scan your library for duplicate folders. Click the Library tab to get started.</p></div>
+        </div>
+
+        <div class="tab-content" id="tab-activity">
+            <div class="activity-log" id="activity-log"></div>
         </div>
 
         <div class="tab-content" id="tab-history">
