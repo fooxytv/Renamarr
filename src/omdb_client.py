@@ -38,6 +38,15 @@ class OMDbClient:
         """
         self.api_key = api_key
         self.rate_limit_delay = 1.0 / requests_per_second
+
+    def _fix_poster_url(self, url: str | None) -> str | None:
+        """Ensure Patron poster URLs include the API key."""
+        if not url:
+            return None
+        if "img.omdbapi.com" in url and "apikey=" not in url:
+            sep = "&" if "?" in url else "?"
+            return f"{url}{sep}apikey={self.api_key}"
+        return url
         self._last_request_time = 0.0
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, dict] = {}
@@ -134,7 +143,7 @@ class OMDbClient:
                     title=item.get("Title", ""),
                     year=movie_year,
                     plot="",
-                    poster=item.get("Poster") if item.get("Poster") != "N/A" else None,
+                    poster=self._fix_poster_url(item.get("Poster") if item.get("Poster") != "N/A" else None),
                 )
             )
 
@@ -166,7 +175,7 @@ class OMDbClient:
             title=data.get("Title", ""),
             year=movie_year,
             plot=data.get("Plot", ""),
-            poster=data.get("Poster") if data.get("Poster") != "N/A" else None,
+            poster=self._fix_poster_url(data.get("Poster") if data.get("Poster") != "N/A" else None),
         )
 
     async def get_movie_by_title(
@@ -201,7 +210,7 @@ class OMDbClient:
             title=data.get("Title", ""),
             year=movie_year,
             plot=data.get("Plot", ""),
-            poster=data.get("Poster") if data.get("Poster") != "N/A" else None,
+            poster=self._fix_poster_url(data.get("Poster") if data.get("Poster") != "N/A" else None),
         )
 
     async def find_best_match(
