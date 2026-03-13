@@ -20,6 +20,7 @@ from .. import __version__
 from ..auth import get_api_key, get_passphrase, verify_code
 from ..config import Config
 from ..duplicates import DuplicateHandler
+from ..library_dedup import LibraryDeduplicator
 from ..formatter import PlexFormatter
 from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
@@ -29,6 +30,8 @@ from ..utils import format_size
 from .models import (
     DuplicateGroupPreview,
     FilePreview,
+    FolderMergePreview,
+    LibraryScanResult,
     ScanResult,
     StatusResponse,
 )
@@ -480,6 +483,125 @@ class RenamarrWeb:
         logger.info(f"Emptied trash: {count} files deleted")
         return count
 
+    # Library folder deduplication
+    async def run_library_scan(self) -> None:
+        """Scan library directories for case-insensitive duplicate folders."""
+        scan_id = str(uuid.uuid4())
+        scan = LibraryScanResult(
+            scan_id=scan_id,
+            started_at=datetime.now().isoformat(),
+            status="running",
+        )
+        self.store.save_library_scan(scan)
+
+        try:
+            dedup = LibraryDeduplicator()
+            all_groups: list[FolderMergePreview] = []
+
+            # Scan movies output directory
+            movies_output = self.config.directories.movies.output
+            if movies_output.exists():
+                logger.info(f"Library scan: movies at {movies_output}")
+                groups = dedup.scan_directory(movies_output, recursive=False)
+                for g in groups:
+                    all_groups.append(FolderMergePreview(
+                        id=str(uuid.uuid4()),
+                        canonical_path=str(g.canonical),
+                        canonical_name=g.canonical.name,
+                        duplicate_paths=[str(d) for d in g.duplicates],
+                        duplicate_names=[d.name for d in g.duplicates],
+                        canonical_file_count=g.canonical_file_count,
+                        canonical_size=g.canonical_size,
+                        canonical_size_human=format_size(g.canonical_size),
+                        duplicate_file_count=g.duplicate_file_count,
+                        duplicate_size=g.duplicate_size,
+                        duplicate_size_human=format_size(g.duplicate_size),
+                        conflicts=g.conflicts,
+                        media_type="movie",
+                    ))
+
+            # Scan TV output directory (recursive for season folders)
+            tv_output = self.config.directories.tv.output
+            if tv_output.exists():
+                logger.info(f"Library scan: TV at {tv_output}")
+                groups = dedup.scan_directory(tv_output, recursive=True)
+                for g in groups:
+                    all_groups.append(FolderMergePreview(
+                        id=str(uuid.uuid4()),
+                        canonical_path=str(g.canonical),
+                        canonical_name=g.canonical.name,
+                        duplicate_paths=[str(d) for d in g.duplicates],
+                        duplicate_names=[d.name for d in g.duplicates],
+                        canonical_file_count=g.canonical_file_count,
+                        canonical_size=g.canonical_size,
+                        canonical_size_human=format_size(g.canonical_size),
+                        duplicate_file_count=g.duplicate_file_count,
+                        duplicate_size=g.duplicate_size,
+                        duplicate_size_human=format_size(g.duplicate_size),
+                        conflicts=g.conflicts,
+                        media_type="tv",
+                    ))
+
+            scan.groups = all_groups
+            scan.status = "completed"
+            scan.completed_at = datetime.now().isoformat()
+            logger.info(f"Library scan complete: {len(all_groups)} duplicate folder groups")
+
+        except Exception as e:
+            logger.error(f"Library scan failed: {e}", exc_info=True)
+            scan.status = "failed"
+            scan.error = "Library scan failed. Check server logs."
+            scan.completed_at = datetime.now().isoformat()
+
+        self.store.save_library_scan(scan)
+        self.scanning = False
+
+    async def execute_library_merges(self) -> dict:
+        """Execute all approved folder merges."""
+        scan = self.store.load_library_scan()
+        if not scan:
+            return {"error": "No library scan results"}
+
+        dedup = LibraryDeduplicator()
+        results = {"merged": 0, "moved_files": 0, "failed": 0, "errors": []}
+
+        for group in scan.groups:
+            if group.status != "approved":
+                continue
+
+            canonical = Path(group.canonical_path)
+            group_moved = 0
+            group_failed = False
+
+            for dup_path_str in group.duplicate_paths:
+                dup_path = Path(dup_path_str)
+                result = dedup.execute_merge(canonical, dup_path)
+                group_moved += result.moved
+                if result.failed > 0:
+                    group_failed = True
+                    results["errors"].extend(result.errors)
+
+            if group_failed:
+                group.status = "failed"
+                results["failed"] += 1
+            else:
+                group.status = "completed"
+                results["merged"] += 1
+
+            results["moved_files"] += group_moved
+
+        self.store.save_library_scan(scan)
+
+        # Send Discord notification
+        await self._notifier.library_cleanup_completed(
+            merged=results["merged"],
+            moved_files=results["moved_files"],
+            failed=results["failed"],
+            errors=results.get("errors"),
+        )
+
+        return results
+
 
 def _verify_api_key(x_api_key: str = Header(default="")):
     """Dependency to verify API key if configured."""
@@ -643,5 +765,51 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
     async def empty_trash():
         count = web.empty_trash()
         return {"deleted": count}
+
+    # Library dedup endpoints
+    @app.post("/api/library/scan", dependencies=[Depends(_verify_api_key)])
+    async def trigger_library_scan():
+        if web.scanning:
+            raise HTTPException(409, "Scan already in progress")
+        web.scanning = True
+        web._scan_task = asyncio.create_task(web.run_library_scan())
+        return {"message": "Library scan started"}
+
+    @app.get("/api/library/scan/current", dependencies=[Depends(_verify_api_key)])
+    async def current_library_scan():
+        scan = web.store.load_library_scan()
+        if not scan:
+            raise HTTPException(404, "No library scan results")
+        return scan
+
+    @app.post("/api/library/groups/{group_id}/approve", dependencies=[Depends(_verify_api_key)])
+    async def approve_merge_group(group_id: str):
+        if not web.store.update_merge_group_status(group_id, "approved"):
+            raise HTTPException(404, "Group not found")
+        return {"status": "approved"}
+
+    @app.post("/api/library/groups/{group_id}/skip", dependencies=[Depends(_verify_api_key)])
+    async def skip_merge_group(group_id: str):
+        if not web.store.update_merge_group_status(group_id, "skipped"):
+            raise HTTPException(404, "Group not found")
+        return {"status": "skipped"}
+
+    @app.post("/api/library/groups/{group_id}/pending", dependencies=[Depends(_verify_api_key)])
+    async def reset_merge_group(group_id: str):
+        if not web.store.update_merge_group_status(group_id, "pending"):
+            raise HTTPException(404, "Group not found")
+        return {"status": "pending"}
+
+    @app.post("/api/library/groups/approve-all", dependencies=[Depends(_verify_api_key)])
+    async def approve_all_merge_groups():
+        count = web.store.update_all_merge_groups("pending", "approved")
+        return {"approved": count}
+
+    @app.post("/api/library/execute", dependencies=[Depends(_verify_api_key)])
+    async def execute_library_merges():
+        if web.scanning:
+            raise HTTPException(409, "Cannot execute while scan is running")
+        results = await web.execute_library_merges()
+        return results
 
     return app

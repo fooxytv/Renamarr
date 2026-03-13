@@ -533,6 +533,116 @@ header h1 span {
     font-size: 0.8rem;
 }
 
+/* Duplicate cards with poster */
+.dup-card-with-poster {
+    display: flex;
+    gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.dup-poster {
+    flex-shrink: 0;
+    width: 80px;
+}
+
+.dup-poster img {
+    width: 100%;
+    border-radius: 4px;
+}
+
+.dup-card-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.dup-card-content h3 {
+    font-size: 0.95rem;
+    margin-bottom: 10px;
+    color: var(--text);
+}
+
+/* Library merge groups */
+.merge-group {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.merge-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.merge-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.merge-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.merge-folder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+.merge-canonical {
+    border-left: 3px solid var(--green);
+}
+
+.merge-duplicate {
+    border-left: 3px solid var(--orange);
+}
+
+.merge-path {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    font-size: 0.8rem;
+}
+
+.merge-stats {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.merge-summary {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    padding: 4px 0;
+}
+
+.merge-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.merge-type {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
 /* Version footer */
 .version-footer {
     text-align: center;

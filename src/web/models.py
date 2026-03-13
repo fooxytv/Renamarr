@@ -46,6 +46,37 @@ class ScanResult(BaseModel):
     error: str | None = None
 
 
+class FolderMergePreview(BaseModel):
+    """A group of duplicate folders to merge."""
+
+    id: str
+    canonical_path: str
+    canonical_name: str
+    duplicate_paths: list[str]
+    duplicate_names: list[str]
+    canonical_file_count: int = 0
+    canonical_size: int = 0
+    canonical_size_human: str = ""
+    duplicate_file_count: int = 0
+    duplicate_size: int = 0
+    duplicate_size_human: str = ""
+    conflicts: int = 0
+    media_type: str = "movie"
+    status: str = "pending"  # pending | approved | skipped | completed | failed
+    error: str | None = None
+
+
+class LibraryScanResult(BaseModel):
+    """Result of a library dedup scan."""
+
+    scan_id: str
+    started_at: str
+    completed_at: str | None = None
+    status: str = "running"  # running | completed | failed
+    groups: list[FolderMergePreview] = []
+    error: str | None = None
+
+
 class StatusResponse(BaseModel):
     """App status response."""
 

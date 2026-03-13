@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from .models import ScanResult
+from .models import LibraryScanResult, ScanResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,7 @@ class ScanStore:
         self._scan_file = self.data_dir / "current_scan.json"
         self._history_file = self.data_dir / "scan_history.json"
         self._operations_file = self.data_dir / "operations.json"
+        self._library_scan_file = self.data_dir / "library_scan.json"
 
     def save_scan(self, scan: ScanResult) -> None:
         """Save the current scan result."""
@@ -93,6 +94,49 @@ class ScanStore:
     def load_history(self) -> list[dict]:
         """Load scan history."""
         return self._load_history()
+
+    # Library dedup scan persistence
+    def save_library_scan(self, scan: LibraryScanResult) -> None:
+        """Save the current library dedup scan result."""
+        with open(self._library_scan_file, "w", encoding="utf-8") as f:
+            f.write(scan.model_dump_json(indent=2))
+
+    def load_library_scan(self) -> LibraryScanResult | None:
+        """Load the current library dedup scan result."""
+        if not self._library_scan_file.exists():
+            return None
+        try:
+            with open(self._library_scan_file, encoding="utf-8") as f:
+                data = json.load(f)
+            return LibraryScanResult(**data)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Failed to load library scan: {e}")
+            return None
+
+    def update_merge_group_status(self, group_id: str, status: str) -> bool:
+        """Update the status of a single merge group."""
+        scan = self.load_library_scan()
+        if not scan:
+            return False
+        for group in scan.groups:
+            if group.id == group_id:
+                group.status = status
+                self.save_library_scan(scan)
+                return True
+        return False
+
+    def update_all_merge_groups(self, from_status: str, to_status: str) -> int:
+        """Update all merge groups from one status to another. Returns count."""
+        scan = self.load_library_scan()
+        if not scan:
+            return 0
+        count = 0
+        for group in scan.groups:
+            if group.status == from_status:
+                group.status = to_status
+                count += 1
+        self.save_library_scan(scan)
+        return count
 
     def save_operations(self, operations: dict) -> None:
         """Save serialized operations map to disk.

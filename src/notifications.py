@@ -155,6 +155,36 @@ class DiscordNotifier:
 
         await self._send([embed])
 
+    async def library_cleanup_completed(
+        self,
+        merged: int,
+        moved_files: int,
+        failed: int,
+        errors: list[str] | None = None,
+    ) -> None:
+        """Notify that library folder merges have been executed."""
+        if merged == 0 and failed == 0:
+            return
+
+        color = 3066993 if failed == 0 else 15158332
+        embed = {
+            "title": "Library Cleanup Complete",
+            "color": color,
+            "fields": [
+                {"name": "Folders Merged", "value": str(merged), "inline": True},
+                {"name": "Files Moved", "value": str(moved_files), "inline": True},
+                {"name": "Failed", "value": str(failed), "inline": True},
+            ],
+        }
+
+        if errors:
+            error_text = "\n".join(errors[:5])
+            if len(errors) > 5:
+                error_text += f"\n...and {len(errors) - 5} more"
+            embed["fields"].append({"name": "Errors", "value": f"```{error_text}```"})
+
+        await self._send([embed])
+
     async def scan_failed(self, error: str) -> None:
         """Notify that a scan failed."""
         embed = {
