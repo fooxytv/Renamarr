@@ -335,6 +335,16 @@ class RenamarrWeb:
             except OSError:
                 already_correct = False
 
+            # Also check if destination already exists in library
+            # (file was previously moved but a copy remains in watch dir)
+            if not already_correct:
+                try:
+                    if op.destination.exists():
+                        already_correct = True
+                        logger.debug(f"File already exists in library: {op.destination}")
+                except OSError:
+                    pass
+
             title = ""
             year = None
             season = None

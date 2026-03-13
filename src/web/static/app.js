@@ -233,8 +233,13 @@ function renderCards(filtered) {
         html += '<div class="rename-from" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</div>';
         html += '<div class="rename-arrow">&darr;</div>';
         html += '<div class="rename-to-row">';
-        html += '<div class="rename-to" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</div>';
-        html += '<button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(getDestFolder(f.destination_path)) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button>';
+        const destFolder = getDestFolder(f.destination_path);
+        let destDisplay = esc(f.destination_filename);
+        if (f.source_filename === f.destination_filename && destFolder) {
+            destDisplay = '<span class="dest-folder">' + esc(destFolder) + '/</span>' + destDisplay;
+        }
+        html += '<div class="rename-to" title="' + esc(f.destination_path) + '">' + destDisplay + '</div>';
+        html += '<button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(destFolder) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button>';
         html += '</div>';
         html += '</div>';
         html += '</div>'; // card-info
@@ -269,7 +274,12 @@ function renderTable(filtered) {
         html += '<td>' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</td>';
         html += '<td class="filename" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</td>';
         html += '<td class="arrow">&rarr;</td>';
-        html += '<td class="filename" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + ' <button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(getDestFolder(f.destination_path)) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button></td>';
+        const tblDestFolder = getDestFolder(f.destination_path);
+        let tblDestDisplay = esc(f.destination_filename);
+        if (f.source_filename === f.destination_filename && tblDestFolder) {
+            tblDestDisplay = '<span class="dest-folder">' + esc(tblDestFolder) + '/</span>' + tblDestDisplay;
+        }
+        html += '<td class="filename" title="' + esc(f.destination_path) + '">' + tblDestDisplay + ' <button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(tblDestFolder) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button></td>';
         html += '<td>' + (f.resolution || '-') + '</td>';
         html += '<td>' + formatSize(f.file_size) + '</td>';
         html += '<td class="meta-actions">';

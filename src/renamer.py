@@ -252,6 +252,14 @@ class RenamerService:
         except OSError:
             pass
 
+        # Skip if source file no longer exists (already moved or deleted)
+        if not operation.source.exists():
+            logger.warning(f"Source file no longer exists: {operation.source}")
+            return RenameResult(
+                operation=operation, success=False,
+                error="Source file no longer exists",
+            )
+
         logger.info(f"Rename: {operation.source.name} -> {operation.destination}")
 
         if self.dry_run:

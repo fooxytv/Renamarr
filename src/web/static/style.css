@@ -445,6 +445,11 @@ header .container {
     color: var(--green);
 }
 
+.dest-folder {
+    color: var(--text-dim);
+    font-size: 0.85em;
+}
+
 .media-card .card-rename .rename-to-row {
     display: flex;
     align-items: center;
