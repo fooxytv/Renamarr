@@ -38,6 +38,10 @@ class OMDbClient:
         """
         self.api_key = api_key
         self.rate_limit_delay = 1.0 / requests_per_second
+        self._last_request_time = 0.0
+        self._client: httpx.AsyncClient | None = None
+        self._cache: dict[str, dict] = {}
+        self._rate_limited = False
 
     def _fix_poster_url(self, url: str | None) -> str | None:
         """Ensure Patron poster URLs include the API key."""
@@ -47,10 +51,6 @@ class OMDbClient:
             sep = "&" if "?" in url else "?"
             return f"{url}{sep}apikey={self.api_key}"
         return url
-        self._last_request_time = 0.0
-        self._client: httpx.AsyncClient | None = None
-        self._cache: dict[str, dict] = {}
-        self._rate_limited = False
 
     async def __aenter__(self) -> "OMDbClient":
         """Enter async context."""
