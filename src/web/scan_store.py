@@ -19,6 +19,8 @@ class ScanStore:
         self._history_file = self.data_dir / "scan_history.json"
         self._operations_file = self.data_dir / "operations.json"
         self._library_scan_file = self.data_dir / "library_scan.json"
+        self._archive_dir = self.data_dir / "scan_archives"
+        self._archive_dir.mkdir(parents=True, exist_ok=True)
 
     def save_scan(self, scan: ScanResult) -> None:
         """Save the current scan result."""
@@ -65,7 +67,7 @@ class ScanStore:
         return count
 
     def save_to_history(self, scan: ScanResult) -> None:
-        """Append a scan summary to history."""
+        """Append a scan summary to history and archive the full scan."""
         history = self._load_history()
         summary = {
             "scan_id": scan.scan_id,
@@ -74,12 +76,19 @@ class ScanStore:
             "status": scan.status,
             "total_files": len(scan.files),
             "duplicates": len(scan.duplicates),
+            "has_archive": True,
         }
         history.insert(0, summary)
         # Keep last 50
         history = history[:50]
         with open(self._history_file, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2)
+
+        # Archive the full scan result
+        archive_file = self._archive_dir / f"{scan.scan_id}.json"
+        with open(archive_file, "w", encoding="utf-8") as f:
+            f.write(scan.model_dump_json(indent=2))
+        self._prune_archives(history)
 
     def _load_history(self) -> list[dict]:
         """Load scan history."""
@@ -94,6 +103,30 @@ class ScanStore:
     def load_history(self) -> list[dict]:
         """Load scan history."""
         return self._load_history()
+
+    def load_archive(self, scan_id: str) -> ScanResult | None:
+        """Load an archived scan by ID."""
+        safe_id = Path(scan_id).name
+        archive_file = self._archive_dir / f"{safe_id}.json"
+        if not archive_file.exists():
+            return None
+        try:
+            with open(archive_file, encoding="utf-8") as f:
+                data = json.load(f)
+            return ScanResult(**data)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Failed to load archive {scan_id}: {e}")
+            return None
+
+    def _prune_archives(self, history: list[dict]) -> None:
+        """Remove archive files not in the current history list."""
+        keep_ids = {h["scan_id"] for h in history}
+        for archive_file in self._archive_dir.glob("*.json"):
+            if archive_file.stem not in keep_ids:
+                try:
+                    archive_file.unlink()
+                except OSError:
+                    pass
 
     # Library dedup scan persistence
     def save_library_scan(self, scan: LibraryScanResult) -> None:

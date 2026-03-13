@@ -900,6 +900,32 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
     async def scan_history():
         return web.store.load_history()
 
+    @app.get("/api/history/{scan_id}", dependencies=[Depends(_verify_api_key)])
+    async def get_archived_scan(scan_id: str):
+        scan = web.store.load_archive(scan_id)
+        if not scan:
+            raise HTTPException(404, "Archived scan not found")
+        return scan
+
+    @app.get("/api/history/{scan_id}/download")
+    async def download_archived_scan(scan_id: str, api_key: str = ""):
+        # Accept API key as query param for browser downloads
+        required_key = get_api_key()
+        if required_key:
+            if not api_key or not hmac.compare_digest(api_key, required_key):
+                raise HTTPException(401, "Invalid or missing API key")
+        scan = web.store.load_archive(scan_id)
+        if not scan:
+            raise HTTPException(404, "Archived scan not found")
+        from fastapi.responses import Response
+        date_str = scan.completed_at[:10] if scan.completed_at else scan.started_at[:10]
+        filename = f"renamarr-scan-{date_str}.json"
+        return Response(
+            content=scan.model_dump_json(indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     @app.post("/api/files/{file_id}/approve", dependencies=[Depends(_verify_api_key)])
     async def approve_file(file_id: str):
         if not web.store.update_file_status(file_id, "approved"):

@@ -552,6 +552,15 @@ header h1 span {
 .history-date { color: var(--text-dim); min-width: 160px; }
 .history-count { color: var(--blue); font-weight: 500; }
 
+.history-clickable { cursor: pointer; transition: background 0.2s; }
+.history-clickable:hover { background: var(--bg-hover); }
+
+.history-view-link {
+    color: var(--blue);
+    font-size: 0.8rem;
+    margin-left: auto;
+}
+
 /* Scanning overlay */
 .scanning {
     text-align: center;

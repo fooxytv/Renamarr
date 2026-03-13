@@ -364,15 +364,101 @@ async function loadHistory() {
 
     let html = '';
     for (const h of history) {
-        html += '<div class="history-item">';
+        const clickable = h.has_archive ? ' history-clickable' : '';
+        const onclick = h.has_archive ? ' onclick="viewArchive(\'' + h.scan_id + '\')"' : '';
+        html += '<div class="history-item' + clickable + '"' + onclick + '>';
         html += '<span class="history-date">' + new Date(h.started_at).toLocaleString() + '</span>';
         html += '<span class="badge badge-' + (h.status === 'completed' ? 'completed' : 'failed') + '">' + h.status + '</span>';
         html += '<span class="history-count">' + h.total_files + ' files</span>';
         html += '<span class="history-count">' + h.duplicates + ' duplicates</span>';
+        if (h.has_archive) {
+            html += '<span class="history-view-link">View &rarr;</span>';
+        }
         html += '</div>';
     }
 
     document.getElementById('tab-history').innerHTML = html;
+}
+
+// Archive viewing
+async function viewArchive(scanId) {
+    document.getElementById('tab-history').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Loading archived scan...</p></div>';
+    try {
+        const scan = await api('GET', '/api/history/' + scanId);
+        if (scan.detail) {
+            showEmpty('history', 'Archive not found.');
+            return;
+        }
+        renderArchive(scan, scanId);
+    } catch (e) {
+        showEmpty('history', 'Failed to load archive.');
+    }
+}
+
+function renderArchive(scan, scanId) {
+    window._archiveFiles = scan.files;
+
+    let html = '<div class="toolbar">';
+    html += '<button class="btn btn-outline btn-sm" onclick="loadHistory()">&larr; Back to History</button>';
+    html += '<div class="filter-group">';
+    html += '<span class="filter-label">' + new Date(scan.started_at).toLocaleString() + '</span>';
+    html += '<span class="badge badge-' + scan.status + '">' + scan.status + '</span>';
+    html += '<span class="filter-label">' + scan.files.length + ' files, ' + scan.duplicates.length + ' duplicates</span>';
+    html += '</div>';
+    html += '<div class="toolbar-spacer"></div>';
+    html += '<button class="btn btn-primary btn-sm" onclick="downloadArchive(\'' + scanId + '\')">Download JSON</button>';
+    html += '</div>';
+
+    html += '<div class="toolbar">';
+    html += '<input type="text" class="search-box" placeholder="Search files..." oninput="filterArchive(this.value)">';
+    html += '</div>';
+
+    html += '<table class="file-table"><thead><tr>';
+    html += '<th>Status</th><th>Type</th><th>Title</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Size</th>';
+    html += '</tr></thead><tbody id="archive-tbody">';
+
+    for (const f of scan.files) {
+        html += renderArchiveRow(f);
+    }
+
+    html += '</tbody></table>';
+    document.getElementById('tab-history').innerHTML = html;
+}
+
+function renderArchiveRow(f) {
+    let subtitle = '';
+    if (f.media_type === 'movie' && f.year) {
+        subtitle = ' (' + f.year + ')';
+    } else if (f.media_type === 'episode' && f.season != null) {
+        subtitle = ' S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode).padStart(2, '0');
+    }
+
+    let html = '<tr>';
+    html += '<td><span class="badge badge-' + f.status + '">' + f.status + '</span></td>';
+    html += '<td>' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</td>';
+    html += '<td>' + esc(f.title || 'Unknown') + subtitle + '</td>';
+    html += '<td class="filename" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</td>';
+    html += '<td class="arrow">&rarr;</td>';
+    html += '<td class="filename" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</td>';
+    html += '<td>' + (f.resolution || '-') + '</td>';
+    html += '<td>' + formatSize(f.file_size) + '</td>';
+    html += '</tr>';
+    return html;
+}
+
+function filterArchive(query) {
+    const q = query.toLowerCase();
+    const filtered = q ? window._archiveFiles.filter(f =>
+        (f.source_filename && f.source_filename.toLowerCase().includes(q)) ||
+        (f.destination_filename && f.destination_filename.toLowerCase().includes(q)) ||
+        (f.title && f.title.toLowerCase().includes(q))
+    ) : window._archiveFiles;
+    document.getElementById('archive-tbody').innerHTML = filtered.map(renderArchiveRow).join('');
+}
+
+function downloadArchive(scanId) {
+    const key = apiKey ? '?api_key=' + encodeURIComponent(apiKey) : '';
+    window.location.href = API + '/api/history/' + scanId + '/download' + key;
 }
 
 // Actions
