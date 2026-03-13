@@ -203,8 +203,11 @@ async def async_main(args: argparse.Namespace) -> int:
         return 1
 
     # Override dry run from command line or DRY_RUN env var
-    if args.dry_run or os.environ.get("DRY_RUN", "").lower() in ("true", "1", "yes"):
+    dry_run_env = os.environ.get("DRY_RUN", "").lower()
+    if args.dry_run or dry_run_env in ("true", "1", "yes"):
         config.options.dry_run = True
+    elif dry_run_env in ("false", "0", "no"):
+        config.options.dry_run = False
 
     # Create application
     app = Renamarr(config)
@@ -265,8 +268,11 @@ def main() -> int:
             logging.getLogger(__name__).error(f"Failed to load configuration: {e}")
             return 1
 
-        if args.dry_run or os.environ.get("DRY_RUN", "").lower() in ("true", "1", "yes"):
+        dry_run_env = os.environ.get("DRY_RUN", "").lower()
+        if args.dry_run or dry_run_env in ("true", "1", "yes"):
             config.options.dry_run = True
+        elif dry_run_env in ("false", "0", "no"):
+            config.options.dry_run = False
 
         web_app = create_app(config, config.web.data_dir)
         logging.getLogger(__name__).info(f"Starting web UI on {config.web.host}:{config.web.port}")
