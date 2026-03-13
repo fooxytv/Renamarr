@@ -44,13 +44,9 @@ header .container {
     align-items: center;
 }
 
-header h1 {
-    font-size: 1.4rem;
-    font-weight: 600;
-}
-
-header h1 span {
-    color: var(--blue);
+.header-logo {
+    height: 36px;
+    display: block;
 }
 
 .header-actions {
