@@ -424,6 +424,109 @@ class RenamarrWeb:
 
         return results
 
+    async def retry_file_lookup(
+        self, file_id: str, title: str | None = None, year: int | None = None
+    ) -> dict | None:
+        """Re-run API lookup for a single file, optionally with overridden title/year.
+
+        Updates the scan result and operations cache with new metadata.
+        Returns the updated file preview dict, or None if not found.
+        """
+        scan = self.store.load_scan()
+        if not scan:
+            return None
+
+        # Find the file
+        file_preview = None
+        for f in scan.files:
+            if f.id == file_id:
+                file_preview = f
+                break
+        if not file_preview:
+            return None
+
+        op = self._operations.get(file_id)
+
+        # Use provided title/year or fall back to existing
+        lookup_title = title or file_preview.title or ""
+        lookup_year = year or file_preview.year
+
+        poster_url = None
+        new_title = file_preview.title
+        new_year = file_preview.year
+        new_dest_filename = file_preview.destination_filename
+        new_dest_path = file_preview.destination_path
+
+        if file_preview.media_type == "movie" and self._omdb_client:
+            try:
+                result = await self._omdb_client.find_best_match(lookup_title, lookup_year)
+                if result:
+                    new_title = result.title
+                    new_year = result.year
+                    poster_url = result.poster
+                    # Re-format destination
+                    if op and self._renamer:
+                        formatted = self._renamer.formatter.format_movie(
+                            op.media_info, result
+                        )
+                        output_dir = self.config.directories.movies.output
+                        new_dest = output_dir / formatted.relative_path / formatted.filename
+                        new_dest_path = str(new_dest)
+                        new_dest_filename = new_dest.name
+                        # Update the cached operation
+                        op.destination = new_dest
+                        op.omdb_movie = result
+                        self._serialize_operations()
+            except Exception as e:
+                logger.error(f"OMDb retry failed for '{lookup_title}': {e}")
+
+        elif file_preview.media_type == "episode" and self._tvmaze_client:
+            try:
+                result = await self._tvmaze_client.find_best_match(lookup_title, lookup_year)
+                if result:
+                    new_title = result.name
+                    poster_url = result.poster
+                    # Re-format destination
+                    if op and self._renamer:
+                        ep_result = None
+                        if file_preview.season is not None and file_preview.episode is not None:
+                            ep_result = await self._tvmaze_client.get_episode(
+                                result.tvmaze_id, file_preview.season, file_preview.episode
+                            )
+                        formatted = self._renamer.formatter.format_episode(
+                            op.media_info, result, ep_result
+                        )
+                        output_dir = self.config.directories.tv.output
+                        new_dest = output_dir / formatted.relative_path / formatted.filename
+                        new_dest_path = str(new_dest)
+                        new_dest_filename = new_dest.name
+                        op.destination = new_dest
+                        op.tvmaze_show = result
+                        op.tvmaze_episode = ep_result
+                        self._serialize_operations()
+            except Exception as e:
+                logger.error(f"TVMaze retry failed for '{lookup_title}': {e}")
+
+        # Update the file preview
+        file_preview.title = new_title
+        file_preview.year = new_year
+        file_preview.poster_url = poster_url
+        file_preview.destination_filename = new_dest_filename
+        file_preview.destination_path = new_dest_path
+
+        # Check if now correctly named
+        try:
+            source = Path(file_preview.source_path)
+            dest = Path(new_dest_path)
+            file_preview.already_correct = source.resolve() == dest.resolve()
+            if file_preview.already_correct:
+                file_preview.status = "correct"
+        except OSError:
+            pass
+
+        self.store.save_scan(scan)
+        return file_preview.model_dump()
+
     def list_trash(self) -> list[dict]:
         """List files in the duplicates/trash folder."""
         dup_folder = self.config.duplicates.duplicates_folder
@@ -814,6 +917,21 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         if not web.store.update_file_status(file_id, "pending"):
             raise HTTPException(404, "File not found")
         return {"status": "pending"}
+
+    @app.post("/api/files/{file_id}/retry", dependencies=[Depends(_verify_api_key)])
+    async def retry_file_lookup(file_id: str, request: Request):
+        body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+        title = body.get("title")
+        year = body.get("year")
+        if year is not None:
+            try:
+                year = int(year)
+            except (ValueError, TypeError):
+                year = None
+        result = await web.retry_file_lookup(file_id, title=title, year=year)
+        if not result:
+            raise HTTPException(404, "File not found")
+        return result
 
     @app.post("/api/files/approve-all", dependencies=[Depends(_verify_api_key)])
     async def approve_all():

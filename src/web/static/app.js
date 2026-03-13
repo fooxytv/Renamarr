@@ -213,6 +213,10 @@ function renderCards(filtered) {
 
         html += '<div class="card-meta">';
         html += '<span>' + formatSize(f.file_size) + '</span>';
+        html += '<span class="card-meta-actions">';
+        html += '<button class="btn-icon" onclick="retryLookup(\'' + f.id + '\')" title="Retry API lookup">&#x21bb;</button>';
+        html += '<button class="btn-icon" onclick="editMetadata(\'' + f.id + '\', \'' + esc(f.title || '') + '\', ' + (f.year || 'null') + ')" title="Edit metadata">&#x270E;</button>';
+        html += '</span>';
         html += '</div>';
 
         html += '<div class="card-rename">';
@@ -243,7 +247,7 @@ function renderCards(filtered) {
 // Render file table
 function renderTable(filtered) {
     let html = '<table class="file-table"><thead><tr>';
-    html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Size</th><th>Actions</th>';
+    html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Size</th><th>Metadata</th><th>Actions</th>';
     html += '</tr></thead><tbody>';
 
     for (const f of filtered) {
@@ -255,6 +259,10 @@ function renderTable(filtered) {
         html += '<td class="filename" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</td>';
         html += '<td>' + (f.resolution || '-') + '</td>';
         html += '<td>' + formatSize(f.file_size) + '</td>';
+        html += '<td class="meta-actions">';
+        html += '<button class="btn-icon" onclick="retryLookup(\'' + f.id + '\')" title="Retry API lookup">&#x21bb;</button>';
+        html += '<button class="btn-icon" onclick="editMetadata(\'' + f.id + '\', \'' + esc(f.title || '') + '\', ' + (f.year || 'null') + ')" title="Edit metadata">&#x270E;</button>';
+        html += '</td>';
         html += '<td>';
         if (f.status === 'pending') {
             html += '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + f.id + '\')">Approve</button> ';
@@ -758,6 +766,48 @@ async function executeLibrary() {
     if (result.failed > 0) msg += ' ' + result.failed + ' failed.';
     alert(msg);
     await loadLibraryScan();
+}
+
+// Metadata retry/edit
+async function retryLookup(id) {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const result = await api('POST', '/api/files/' + id + '/retry');
+        if (result.detail) {
+            alert('Retry failed: ' + result.detail);
+        }
+        await loadScan();
+    } catch (e) {
+        alert('Retry failed: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '&#x21bb;';
+}
+
+async function editMetadata(id, currentTitle, currentYear) {
+    const title = prompt('Enter title:', currentTitle);
+    if (title === null) return;
+    const yearStr = prompt('Enter year (or leave blank):', currentYear || '');
+    if (yearStr === null) return;
+    const year = yearStr ? parseInt(yearStr, 10) : null;
+    if (yearStr && isNaN(year)) {
+        alert('Invalid year.');
+        return;
+    }
+    const body = {};
+    if (title) body.title = title.trim();
+    if (year) body.year = year;
+    try {
+        const result = await api('POST', '/api/files/' + id + '/retry', body);
+        if (result.detail) {
+            alert('Lookup failed: ' + result.detail);
+        }
+        await loadScan();
+    } catch (e) {
+        alert('Lookup failed: ' + e.message);
+    }
 }
 
 // Init
