@@ -23,7 +23,7 @@ class PlexFormatter:
 
     # Default naming patterns
     DEFAULT_MOVIE_PATTERN = "{title} ({year})/{title} ({year}){ext}"
-    DEFAULT_TV_PATTERN = "{show}/Season {season:02d}/{show} - S{season:02d}E{episode:02d} - {episode_title}{ext}"
+    DEFAULT_TV_PATTERN = "{show} ({show_year})/Season {season:02d}/{show} ({show_year}) - S{season:02d}E{episode:02d} - {episode_title}{ext}"
 
     def __init__(
         self,
@@ -119,8 +119,13 @@ class PlexFormatter:
         # Use TVMaze data if available, fall back to parsed info
         if tv_result:
             show = tv_result.name
+            show_year = tv_result.year
         else:
             show = (media_info.show_name or "Unknown Show").title()
+            show_year = media_info.year
+
+        if not show_year:
+            show_year = "Unknown"
 
         if episode_result:
             season = episode_result.season_number
@@ -145,6 +150,7 @@ class PlexFormatter:
         formatted = self._format_tv_pattern(
             pattern=self.tv_pattern,
             show=show,
+            show_year=show_year,
             season=season,
             episode=episode,
             episode_title=episode_title,
@@ -162,6 +168,7 @@ class PlexFormatter:
         self,
         pattern: str,
         show: str,
+        show_year: int | str,
         season: int,
         episode: int,
         episode_title: str,
@@ -170,6 +177,7 @@ class PlexFormatter:
         """Format TV pattern with support for format specs on numeric values."""
         # Replace simple placeholders first
         result = pattern.replace("{show}", show)
+        result = result.replace("{show_year}", str(show_year))
         result = result.replace("{episode_title}", episode_title)
         result = result.replace("{ext}", ext)
 

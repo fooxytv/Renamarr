@@ -114,8 +114,8 @@ class TestPlexFormatterTV:
 
         result = formatter.format_episode(media_info)
 
-        assert result.relative_path == Path("Breaking Bad/Season 01")
-        assert result.filename == "Breaking Bad - S01E01 - Pilot.mkv"
+        assert result.relative_path == Path("Breaking Bad (Unknown)/Season 01")
+        assert result.filename == "Breaking Bad (Unknown) - S01E01 - Pilot.mkv"
 
     def test_format_episode_with_tvmaze(self):
         """Test episode formatting with TVMaze data."""
@@ -145,8 +145,8 @@ class TestPlexFormatterTV:
 
         result = formatter.format_episode(media_info, tv_result, episode_result)
 
-        assert result.relative_path == Path("Breaking Bad/Season 01")
-        assert result.filename == "Breaking Bad - S01E01 - Pilot.mkv"
+        assert result.relative_path == Path("Breaking Bad (2008)/Season 01")
+        assert result.filename == "Breaking Bad (2008) - S01E01 - Pilot.mkv"
 
     def test_format_episode_no_title(self):
         """Test episode formatting without episode title."""
@@ -163,7 +163,7 @@ class TestPlexFormatterTV:
         result = formatter.format_episode(media_info)
 
         # Should use "Episode" as default
-        assert result.filename == "Some Show - S02E05 - Episode.mkv"
+        assert result.filename == "Some Show (Unknown) - S02E05 - Episode.mkv"
 
     def test_format_episode_zero_padding(self):
         """Test that season and episode numbers are zero-padded."""
@@ -231,7 +231,7 @@ class TestPlexFormatterGeneric:
 
         result = formatter.format(media_info)
 
-        assert "Test Show" in str(result.relative_path)
+        assert "Test Show (Unknown)" in str(result.relative_path)
         assert "Season 01" in str(result.relative_path)
 
     def test_format_unknown_type_raises(self):
