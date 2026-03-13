@@ -328,20 +328,32 @@ function renderDuplicates(duplicates) {
         html += '<div class="dup-files">';
         for (const f of group.files) {
             const isBest = f.id === group.best_file_id;
-            html += '<div class="dup-file' + (isBest ? ' best' : '') + '">';
+            let rowClass = 'dup-file';
+            if (f.status === 'approved') rowClass += ' dup-kept';
+            else if (f.status === 'rejected') rowClass += ' dup-rejected';
+            else if (isBest) rowClass += ' best';
+            html += '<div class="' + rowClass + '">';
+            if (f.status === 'approved') {
+                html += '<span class="dup-status-icon dup-status-kept">&#10003;</span>';
+            } else if (f.status === 'rejected') {
+                html += '<span class="dup-status-icon dup-status-rejected">&#10005;</span>';
+            }
             html += '<span class="dup-quality">' + (f.resolution || '?') + '</span>';
             html += '<span class="dup-score">Score: ' + f.quality_score + '</span>';
             html += '<span class="dup-filename" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</span>';
             html += '<span>' + formatSize(f.file_size) + '</span>';
-            if (isBest) {
+            if (isBest && f.status === 'pending') {
                 html += '<span class="dup-best-tag">BEST</span>';
             }
-            html += '<span class="badge badge-' + f.status + '">' + f.status + '</span>';
             html += '<span class="dup-actions">';
             if (f.status === 'pending') {
                 html += '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + f.id + '\')">Keep</button> ';
                 html += '<button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
-            } else if (f.status === 'approved' || f.status === 'rejected') {
+            } else if (f.status === 'approved') {
+                html += '<span class="dup-decision-label dup-decision-kept">KEEPING</span>';
+                html += '<button class="btn btn-outline btn-sm" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
+            } else if (f.status === 'rejected') {
+                html += '<span class="dup-decision-label dup-decision-rejected">REMOVING</span>';
                 html += '<button class="btn btn-outline btn-sm" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
             }
             html += '</span>';

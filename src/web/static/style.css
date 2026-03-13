@@ -519,6 +519,42 @@ header h1 span {
 }
 
 .dup-file.best { border-left: 3px solid var(--green); }
+.dup-file.dup-kept {
+    border-left: 3px solid var(--green);
+    background: rgba(76,175,80,0.1);
+}
+.dup-file.dup-rejected {
+    border-left: 3px solid var(--red);
+    background: rgba(244,67,54,0.1);
+    opacity: 0.7;
+}
+
+.dup-status-icon {
+    font-weight: 700;
+    font-size: 1rem;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+.dup-status-kept { color: var(--green); }
+.dup-status-rejected { color: var(--red); }
+
+.dup-decision-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.dup-decision-kept {
+    background: rgba(76,175,80,0.15);
+    color: var(--green);
+}
+.dup-decision-rejected {
+    background: rgba(244,67,54,0.15);
+    color: var(--red);
+}
 .dup-quality { color: var(--blue); font-weight: 500; min-width: 60px; }
 .dup-score { color: var(--text-dim); font-size: 0.8rem; }
 .dup-filename { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
