@@ -227,12 +227,40 @@ class RenamarrWeb:
             status="running",
         )
         self.store.save_scan(scan)
-        self._operations.clear()
         scan_start = datetime.now()
+
+        # For partial scans, preserve existing data from the other type
+        existing_scan = None
+        if media_type != "all":
+            existing_scan = self.store.load_scan()
+
+        # Clear operations for the types being scanned
+        if media_type == "all":
+            self._operations.clear()
+        else:
+            remove_type = "movie" if media_type == "movies" else "episode"
+            self._operations = {
+                fid: op for fid, op in self._operations.items()
+                if not (hasattr(op, 'media_info') and op.media_info.media_type == remove_type)
+            }
 
         try:
             all_files: list[FilePreview] = []
             all_duplicates: list[DuplicateGroupPreview] = []
+
+            # Carry over data from the type NOT being scanned
+            if existing_scan and media_type == "movies":
+                all_files.extend(f for f in existing_scan.files if f.media_type != "movie")
+                all_duplicates.extend(
+                    d for d in existing_scan.duplicates
+                    if d.files and d.files[0].media_type != "movie"
+                )
+            elif existing_scan and media_type == "tv":
+                all_files.extend(f for f in existing_scan.files if f.media_type != "episode")
+                all_duplicates.extend(
+                    d for d in existing_scan.duplicates
+                    if d.files and d.files[0].media_type != "episode"
+                )
 
             # Scan movies
             if media_type in ("all", "movies"):
