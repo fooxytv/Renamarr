@@ -28,7 +28,12 @@ class LogBuffer(logging.Handler):
         self.records: deque[dict] = deque(maxlen=maxlen)
         self._counter = 0
 
+    # Skip noisy loggers that aren't useful in the activity panel
+    SKIP_LOGGERS = {"uvicorn.access", "uvicorn.error", "httpcore", "hpack"}
+
     def emit(self, record: logging.LogRecord) -> None:
+        if record.name in self.SKIP_LOGGERS:
+            return
         self._counter += 1
         self.records.append({
             "id": self._counter,
@@ -849,10 +854,10 @@ def _verify_delete_code(request: Request, x_delete_code: str = Header(default=""
 
 def create_app(config: Config, data_dir: Path) -> FastAPI:
     """Create the FastAPI application."""
-    # Attach log buffer to capture app logs for the activity panel
+    # Attach log buffer to root logger to capture all app logs for the activity panel
     log_buffer.setLevel(logging.INFO)
     log_buffer.setFormatter(logging.Formatter("%(message)s"))
-    logging.getLogger("src").addHandler(log_buffer)
+    logging.getLogger().addHandler(log_buffer)
 
     web = RenamarrWeb(config, data_dir)
 
