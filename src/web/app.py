@@ -1024,6 +1024,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             resp.pending = sum(1 for f in scan.files if f.status == "pending")
             resp.approved = sum(1 for f in scan.files if f.status == "approved")
             resp.rejected = sum(1 for f in scan.files if f.status == "rejected")
+            resp.ignored = sum(1 for f in scan.files if f.status == "ignored")
             resp.completed = sum(1 for f in scan.files if f.status == "completed")
             resp.failed = sum(1 for f in scan.files if f.status == "failed")
         return resp
@@ -1118,6 +1119,12 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         if not web.store.update_file_status(file_id, "pending"):
             raise HTTPException(404, "File not found")
         return {"status": "pending"}
+
+    @app.post("/api/files/{file_id}/ignore", dependencies=[Depends(_verify_api_key)])
+    async def ignore_file(file_id: str):
+        if not web.store.update_file_status(file_id, "ignored"):
+            raise HTTPException(404, "File not found")
+        return {"status": "ignored"}
 
     @app.post("/api/files/{file_id}/retry", dependencies=[Depends(_verify_api_key)])
     async def retry_file_lookup(file_id: str, request: Request):

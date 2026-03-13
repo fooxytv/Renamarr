@@ -169,6 +169,8 @@ header .container {
     border: 1px solid var(--border);
 }
 .btn-outline:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
+.btn-muted { background: var(--surface-hover); color: var(--text-dim); }
+.btn-muted:hover:not(:disabled) { opacity: 0.85; }
 .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
 
 .btn-icon {
@@ -595,6 +597,7 @@ header .container {
 .badge-rejected { background: rgba(244,67,54,0.15); color: var(--red); }
 .badge-completed { background: rgba(74,158,255,0.15); color: var(--blue); }
 .badge-failed { background: rgba(244,67,54,0.3); color: var(--red); }
+.badge-ignored { background: rgba(136,146,160,0.15); color: var(--text-dim); }
 .badge-correct { background: rgba(136,146,160,0.15); color: var(--text-dim); }
 
 /* Duplicate cards */

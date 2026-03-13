@@ -166,7 +166,7 @@ function buildToolbar(files, typeFiltered) {
     html += '<div class="toolbar">';
     html += '<div class="filter-group">';
     html += '<span class="filter-label">Status:</span>';
-    ['all', 'pending', 'approved', 'rejected', 'correct', 'completed'].forEach(f => {
+    ['all', 'pending', 'approved', 'rejected', 'ignored', 'correct', 'completed'].forEach(f => {
         const count = f === 'all' ? typeFiltered.length : typeFiltered.filter(x => x.status === f).length;
         html += '<button class="filter-btn' + (currentFilter === f ? ' active' : '') + '" onclick="setFilter(\'' + f + '\')">' + f + ' (' + count + ')</button>';
     });
@@ -248,7 +248,8 @@ function renderCards(filtered) {
         if (f.status === 'pending') {
             html += '<button class="btn btn-success" onclick="approveFile(\'' + f.id + '\')">Approve</button>';
             html += '<button class="btn btn-danger" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
-        } else if (f.status === 'approved' || f.status === 'rejected') {
+            html += '<button class="btn btn-muted" onclick="ignoreFile(\'' + f.id + '\')">Ignore</button>';
+        } else if (f.status === 'approved' || f.status === 'rejected' || f.status === 'ignored') {
             html += '<button class="btn btn-outline" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
         } else {
             html += '<button class="btn btn-outline" disabled>' + f.status + '</button>';
@@ -289,8 +290,9 @@ function renderTable(filtered) {
         html += '<td>';
         if (f.status === 'pending') {
             html += '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + f.id + '\')">Approve</button> ';
-            html += '<button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
-        } else if (f.status === 'approved' || f.status === 'rejected') {
+            html += '<button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + f.id + '\')">Reject</button> ';
+            html += '<button class="btn btn-muted btn-sm" onclick="ignoreFile(\'' + f.id + '\')">Ignore</button>';
+        } else if (f.status === 'approved' || f.status === 'rejected' || f.status === 'ignored') {
             html += '<button class="btn btn-outline btn-sm" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
         }
         html += '</td>';
@@ -577,6 +579,7 @@ function updateFileStatus(id, status) {
 function updateStatusFromCache() {
     const approved = cachedFiles.filter(f => f.status === 'approved').length;
     const rejected = cachedFiles.filter(f => f.status === 'rejected').length;
+    const ignored = cachedFiles.filter(f => f.status === 'ignored').length;
     const pending = cachedFiles.filter(f => f.status === 'pending').length;
     const completed = cachedFiles.filter(f => f.status === 'completed').length;
     const correct = cachedFiles.filter(f => f.already_correct).length;
@@ -584,6 +587,7 @@ function updateStatusFromCache() {
     document.getElementById('stat-pending').textContent = pending;
     document.getElementById('stat-approved').textContent = approved;
     document.getElementById('stat-rejected').textContent = rejected;
+    document.getElementById('stat-ignored').textContent = ignored;
     document.getElementById('stat-completed').textContent = completed;
     document.getElementById('stat-correct').textContent = correct;
     document.getElementById('btn-execute').disabled = (approved === 0 && rejected === 0);
@@ -602,6 +606,11 @@ async function rejectFile(id) {
 async function resetFile(id) {
     updateFileStatus(id, 'pending');
     api('POST', '/api/files/' + id + '/pending');
+}
+
+async function ignoreFile(id) {
+    updateFileStatus(id, 'ignored');
+    api('POST', '/api/files/' + id + '/ignore');
 }
 
 async function approveAll() {

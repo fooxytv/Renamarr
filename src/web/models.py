@@ -20,7 +20,7 @@ class FilePreview(BaseModel):
     resolution: str | None = None
     quality_score: int = 0
     file_size: int | None = None
-    status: str = "pending"  # pending | approved | rejected | completed | failed
+    status: str = "pending"  # pending | approved | rejected | ignored | completed | failed
     error: str | None = None
     already_correct: bool = False
 
@@ -106,5 +106,6 @@ class StatusResponse(BaseModel):
     pending: int = 0
     approved: int = 0
     rejected: int = 0
+    ignored: int = 0
     completed: int = 0
     failed: int = 0
