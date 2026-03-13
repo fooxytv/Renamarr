@@ -69,7 +69,9 @@ async function refreshStatus() {
     document.getElementById('stat-correct').textContent = correct > 0 ? correct : 0;
 
     if (s.version) document.getElementById('version-stamp').textContent = 'Renamarr v' + s.version;
-    document.getElementById('btn-scan').disabled = s.scanning;
+    const btnScan = document.getElementById('btn-scan');
+    btnScan.disabled = s.scanning;
+    btnScan.innerHTML = s.scanning ? '<span class="btn-spinner"></span> Scanning...' : 'Scan Now';
     document.getElementById('btn-cancel').style.display = s.scanning ? '' : 'none';
     document.getElementById('btn-execute').disabled = s.scanning || s.approved === 0;
 
