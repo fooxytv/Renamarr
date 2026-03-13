@@ -474,6 +474,12 @@ header h1 span {
     font-size: 0.75rem;
 }
 
+.dup-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
 /* History */
 .history-item {
     display: flex;

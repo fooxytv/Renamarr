@@ -317,11 +317,17 @@ function renderDuplicates(duplicates) {
             if (isBest) {
                 html += '<span class="dup-best-tag">BEST</span>';
             }
+            html += '<span class="badge badge-' + f.status + '">' + f.status + '</span>';
+            html += '<span class="dup-actions">';
+            if (f.status === 'pending') {
+                html += '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + f.id + '\')">Keep</button> ';
+                html += '<button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
+            } else if (f.status === 'approved' || f.status === 'rejected') {
+                html += '<button class="btn btn-outline btn-sm" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
+            }
+            html += '</span>';
             html += '</div>';
         }
-        html += '</div>';
-        html += '<div style="margin-top:10px">';
-        html += '<button class="btn btn-success btn-sm" onclick="keepBest(\'' + group.best_file_id + '\',' + JSON.stringify(group.files.filter(f => f.id !== group.best_file_id).map(f => f.id)) + ')">Keep Best, Reject Others</button>';
         html += '</div>';
         html += '</div>';
         html += '</div>';
