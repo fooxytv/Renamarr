@@ -72,14 +72,33 @@ class LibraryDeduplicator:
 
         return groups
 
+    @staticmethod
+    def _normalize_folder_name(name: str) -> str:
+        """Normalize a folder name for duplicate detection.
+
+        Strips year in various formats and normalizes case/whitespace so that
+        'Warrior', 'Warrior (2019)', 'Warrior 2019' all match.
+        """
+        n = name.lower().strip()
+        # Remove year in parentheses: "title (2019)" -> "title"
+        n = re.sub(r"\s*\(\d{4}\)\s*$", "", n)
+        # Remove trailing bare year: "title 2019" -> "title"
+        n = re.sub(r"\s+\d{4}\s*$", "", n)
+        # Collapse whitespace
+        n = re.sub(r"\s+", " ", n).strip()
+        return n
+
     def _find_duplicate_groups(self, parent: Path) -> list[FolderMergeGroup]:
-        """Find groups of case-insensitive duplicate folders within a parent."""
-        # Group folders by lowercase name
+        """Find groups of case-insensitive duplicate folders within a parent.
+
+        Normalizes names by stripping year suffixes so that 'Warrior',
+        'Warrior (2019)', and 'Warrior 2019' are detected as duplicates.
+        """
         folder_map: dict[str, list[Path]] = {}
         try:
             for child in sorted(parent.iterdir()):
                 if child.is_dir() and not child.is_symlink():
-                    key = child.name.lower()
+                    key = self._normalize_folder_name(child.name)
                     folder_map.setdefault(key, []).append(child)
         except (PermissionError, OSError) as e:
             logger.error(f"Error scanning {parent}: {e}")

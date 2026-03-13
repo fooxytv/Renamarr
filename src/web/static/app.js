@@ -861,9 +861,13 @@ function renderLibrary(scan) {
             }
 
             html += '<div class="merge-summary">';
-            html += g.duplicate_file_count + ' files (' + g.duplicate_size_human + ') to merge';
-            if (g.conflicts > 0) {
-                html += ' &middot; <span style="color:var(--yellow)">' + g.conflicts + ' filename conflicts (will be auto-renamed)</span>';
+            if (g.duplicate_file_count === 0) {
+                html += 'Empty duplicate folder &mdash; will be removed';
+            } else {
+                html += g.duplicate_file_count + ' files (' + g.duplicate_size_human + ') to merge';
+                if (g.conflicts > 0) {
+                    html += ' &middot; <span style="color:var(--yellow)">' + g.conflicts + ' filename conflicts (will be auto-renamed)</span>';
+                }
             }
             html += '</div>';
             html += '</div>';
