@@ -214,8 +214,12 @@ class RenamarrWeb:
         if self._tvmaze_client:
             await self._tvmaze_client.__aexit__(None, None, None)
 
-    async def run_scan(self) -> None:
-        """Run a scan in the background."""
+    async def run_scan(self, media_type: str = "all") -> None:
+        """Run a scan in the background.
+
+        Args:
+            media_type: "all", "movies", or "tv"
+        """
         scan_id = str(uuid.uuid4())
         scan = ScanResult(
             scan_id=scan_id,
@@ -231,22 +235,24 @@ class RenamarrWeb:
             all_duplicates: list[DuplicateGroupPreview] = []
 
             # Scan movies
-            movies_dir = self.config.directories.movies.watch
-            if movies_dir.exists():
-                logger.info(f"Scanning movies: {movies_dir}")
-                ops, dups = await self._renamer.preview_directory(movies_dir, "movie")
-                files, dup_previews = self._convert_results(ops, dups)
-                all_files.extend(files)
-                all_duplicates.extend(dup_previews)
+            if media_type in ("all", "movies"):
+                movies_dir = self.config.directories.movies.watch
+                if movies_dir.exists():
+                    logger.info(f"Scanning movies: {movies_dir}")
+                    ops, dups = await self._renamer.preview_directory(movies_dir, "movie")
+                    files, dup_previews = self._convert_results(ops, dups)
+                    all_files.extend(files)
+                    all_duplicates.extend(dup_previews)
 
             # Scan TV
-            tv_dir = self.config.directories.tv.watch
-            if tv_dir.exists():
-                logger.info(f"Scanning TV: {tv_dir}")
-                ops, dups = await self._renamer.preview_directory(tv_dir, "episode")
-                files, dup_previews = self._convert_results(ops, dups)
-                all_files.extend(files)
-                all_duplicates.extend(dup_previews)
+            if media_type in ("all", "tv"):
+                tv_dir = self.config.directories.tv.watch
+                if tv_dir.exists():
+                    logger.info(f"Scanning TV: {tv_dir}")
+                    ops, dups = await self._renamer.preview_directory(tv_dir, "episode")
+                    files, dup_previews = self._convert_results(ops, dups)
+                    all_files.extend(files)
+                    all_duplicates.extend(dup_previews)
 
             scan.files = all_files
             scan.duplicates = all_duplicates
@@ -962,12 +968,16 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         return resp
 
     @app.post("/api/scan", dependencies=[Depends(_verify_api_key)])
-    async def trigger_scan():
+    async def trigger_scan(request: Request):
         if web.scanning:
             raise HTTPException(409, "Scan already in progress")
+        body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+        media_type = body.get("media_type", "all")
+        if media_type not in ("all", "movies", "tv"):
+            raise HTTPException(400, "media_type must be 'all', 'movies', or 'tv'")
         web.scanning = True
-        web._scan_task = asyncio.create_task(web.run_scan())
-        return {"message": "Scan started"}
+        web._scan_task = asyncio.create_task(web.run_scan(media_type))
+        return {"message": f"Scan started ({media_type})"}
 
     @app.post("/api/scan/cancel", dependencies=[Depends(_verify_api_key)])
     async def cancel_scan():

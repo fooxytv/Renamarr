@@ -11,7 +11,11 @@
         <div class="container">
             <a href="/"><img src="/static/logo.png" alt="Renamarr" class="header-logo"></a>
             <div class="header-actions">
-                <button class="btn btn-primary" id="btn-scan" onclick="triggerScan()">Scan Now</button>
+                <div class="scan-btn-group" id="scan-btn-group">
+                    <button class="btn btn-primary" id="btn-scan" onclick="triggerScan('all')">Scan All</button>
+                    <button class="btn btn-primary btn-scan-type" onclick="triggerScan('movies')">Movies</button>
+                    <button class="btn btn-primary btn-scan-type" onclick="triggerScan('tv')">TV</button>
+                </div>
                 <button class="btn btn-danger" id="btn-cancel" onclick="cancelScan()" style="display:none">Cancel Scan</button>
                 <button class="btn btn-success" id="btn-execute" onclick="executeApproved()" disabled>Run</button>
             </div>

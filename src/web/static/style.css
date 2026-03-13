@@ -55,6 +55,34 @@ header .container {
     align-items: center;
 }
 
+.scan-btn-group {
+    display: flex;
+    gap: 0;
+}
+
+.scan-btn-group .btn {
+    border-radius: 0;
+}
+
+.scan-btn-group .btn:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.scan-btn-group .btn:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+.btn-scan-type {
+    opacity: 0.8;
+    font-size: 0.8rem;
+    padding: 8px 12px;
+    border-left: 1px solid rgba(255,255,255,0.2);
+}
+
+.btn-scan-type:hover:not(:disabled) {
+    opacity: 1;
+}
+
 /* Status bar */
 .status-bar {
     display: flex;

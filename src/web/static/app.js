@@ -69,9 +69,11 @@ async function refreshStatus() {
     document.getElementById('stat-correct').textContent = correct > 0 ? correct : 0;
 
     if (s.version) document.getElementById('version-stamp').textContent = 'Renamarr v' + s.version;
+    document.querySelectorAll('.scan-btn-group .btn').forEach(b => {
+        b.disabled = s.scanning;
+    });
     const btnScan = document.getElementById('btn-scan');
-    btnScan.disabled = s.scanning;
-    btnScan.innerHTML = s.scanning ? '<span class="btn-spinner"></span> Scanning...' : 'Scan Now';
+    btnScan.innerHTML = s.scanning ? '<span class="btn-spinner"></span> Scanning...' : 'Scan All';
     document.getElementById('btn-cancel').style.display = s.scanning ? '' : 'none';
     document.getElementById('btn-execute').disabled = s.scanning || (s.approved === 0 && s.rejected === 0);
 
@@ -528,10 +530,12 @@ function downloadArchive(scanId) {
 }
 
 // Actions
-async function triggerScan() {
-    await api('POST', '/api/scan');
-    document.getElementById('btn-scan').disabled = true;
-    document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning your media library...</p></div>';
+async function triggerScan(mediaType) {
+    const body = mediaType ? { media_type: mediaType } : {};
+    await api('POST', '/api/scan', body);
+    document.querySelectorAll('.scan-btn-group .btn').forEach(b => b.disabled = true);
+    const label = mediaType === 'movies' ? 'movies' : mediaType === 'tv' ? 'TV shows' : 'media library';
+    document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning ' + label + '...</p></div>';
     startPolling();
 }
 
