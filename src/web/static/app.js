@@ -114,6 +114,7 @@ async function loadScan() {
         }
 
         cachedFiles = scan.files;
+        window._cachedDuplicates = scan.duplicates;
         renderFiles(scan.files);
         renderDuplicates(scan.duplicates);
         updateTabBadges(scan);
@@ -475,29 +476,52 @@ async function cancelScan() {
     await loadScan();
 }
 
+function updateFileStatus(id, status) {
+    // Optimistic UI update
+    for (const f of cachedFiles) {
+        if (f.id === id) { f.status = status; break; }
+    }
+    // Also update inside duplicate groups
+    if (window._cachedDuplicates) {
+        for (const g of window._cachedDuplicates) {
+            for (const f of g.files) {
+                if (f.id === id) { f.status = status; break; }
+            }
+        }
+        renderDuplicates(window._cachedDuplicates);
+    }
+    renderFiles(cachedFiles);
+}
+
 async function approveFile(id) {
-    await api('POST', '/api/files/' + id + '/approve');
-    await loadScan();
+    updateFileStatus(id, 'approved');
+    api('POST', '/api/files/' + id + '/approve');
 }
 
 async function rejectFile(id) {
-    await api('POST', '/api/files/' + id + '/reject');
-    await loadScan();
+    updateFileStatus(id, 'rejected');
+    api('POST', '/api/files/' + id + '/reject');
 }
 
 async function resetFile(id) {
-    await api('POST', '/api/files/' + id + '/pending');
-    await loadScan();
+    updateFileStatus(id, 'pending');
+    api('POST', '/api/files/' + id + '/pending');
 }
 
 async function approveAll() {
-    await api('POST', '/api/files/approve-all');
-    await loadScan();
+    for (const f of cachedFiles) {
+        if (f.status === 'pending' && !f.already_correct) f.status = 'approved';
+    }
+    renderFiles(cachedFiles);
+    api('POST', '/api/files/approve-all');
 }
 
 async function rejectAll() {
-    await api('POST', '/api/files/reject-all');
-    await loadScan();
+    for (const f of cachedFiles) {
+        if (f.status === 'pending' && !f.already_correct) f.status = 'rejected';
+    }
+    renderFiles(cachedFiles);
+    api('POST', '/api/files/reject-all');
 }
 
 async function keepBest(bestId, rejectIds) {
