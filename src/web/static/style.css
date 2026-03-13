@@ -339,6 +339,14 @@ header h1 span {
     font-size: 0.8rem;
 }
 
+/* Version footer */
+.version-footer {
+    text-align: center;
+    padding: 16px 0;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .file-table { font-size: 0.8rem; }

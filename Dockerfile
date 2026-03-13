@@ -36,6 +36,10 @@ RUN useradd --create-home --shell /bin/bash renamarr
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Version (injected at build time from git tag)
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 # Copy application code
 COPY src/ ./src/
 COPY config.yaml .

@@ -1,3 +1,5 @@
 """Renamarr - Media File Renamer Application."""
 
-__version__ = "1.0.0"
+import os
+
+__version__ = os.environ.get("APP_VERSION", "dev")

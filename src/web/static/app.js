@@ -57,6 +57,7 @@ async function refreshStatus() {
     document.getElementById('stat-completed').textContent = s.completed;
     document.getElementById('stat-correct').textContent = correct > 0 ? correct : 0;
 
+    if (s.version) document.getElementById('version-stamp').textContent = 'Renamarr v' + s.version;
     document.getElementById('btn-scan').disabled = s.scanning;
     document.getElementById('btn-cancel').style.display = s.scanning ? '' : 'none';
     document.getElementById('btn-execute').disabled = s.scanning || s.approved === 0;

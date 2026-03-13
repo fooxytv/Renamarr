@@ -48,6 +48,7 @@ class ScanResult(BaseModel):
 class StatusResponse(BaseModel):
     """App status response."""
 
+    version: str = "dev"
     scanning: bool
     dry_run: bool
     current_scan_id: str | None = None

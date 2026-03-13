@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from .. import __version__
 from ..auth import get_api_key, get_passphrase, verify_code
 from ..config import Config
 from ..duplicates import DuplicateHandler
@@ -525,6 +526,7 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
     async def status() -> StatusResponse:
         scan = web.store.load_scan()
         resp = StatusResponse(
+            version=__version__,
             scanning=web.scanning,
             dry_run=config.options.dry_run,
         )
