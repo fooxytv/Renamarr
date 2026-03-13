@@ -48,6 +48,6 @@ naming:
   movies: "{title} ({year})/{title} ({year}){ext}"
 
   # TV show naming pattern
-  # Available variables: {show}, {season}, {episode}, {episode_title}, {ext}
+  # Available variables: {show}, {show_year}, {season}, {episode}, {episode_title}, {ext}
   # Numeric variables support format specs like :02d for zero-padding
-  tv: "{show}/Season {season:02d}/{show} - S{season:02d}E{episode:02d} - {episode_title}{ext}"
+  tv: "{show} ({show_year})/Season {season:02d}/{show} ({show_year}) - S{season:02d}E{episode:02d} - {episode_title}{ext}"

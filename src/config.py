@@ -77,7 +77,7 @@ class NamingConfig(BaseModel):
         description="Movie naming pattern",
     )
     tv: str = Field(
-        default="{show}/Season {season:02d}/{show} - S{season:02d}E{episode:02d} - {episode_title}{ext}",
+        default="{show} ({show_year})/Season {season:02d}/{show} ({show_year}) - S{season:02d}E{episode:02d} - {episode_title}{ext}",
         description="TV show naming pattern",
     )
 
