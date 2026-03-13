@@ -186,6 +186,200 @@ header h1 span {
 .filter-btn:hover { border-color: var(--text); color: var(--text); }
 .filter-btn.active { background: var(--accent); border-color: var(--blue); color: var(--blue); }
 
+/* View toggle */
+.view-toggle {
+    display: flex;
+    gap: 2px;
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 2px;
+    border: 1px solid var(--border);
+}
+
+.view-toggle-btn {
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.8rem;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.view-toggle-btn.active {
+    background: var(--accent);
+    color: var(--blue);
+}
+
+/* Card grid (poster view) */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.media-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+}
+
+.media-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.media-card .poster-wrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 2/3;
+    background: var(--bg);
+    overflow: hidden;
+}
+
+.media-card .poster-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.media-card .poster-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 16px;
+    gap: 8px;
+}
+
+.media-card .poster-placeholder .placeholder-icon {
+    font-size: 2.5rem;
+    opacity: 0.3;
+}
+
+.media-card .card-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+}
+
+.media-card .card-type-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.card-type-movie { background: rgba(74,158,255,0.85); color: #fff; }
+.card-type-episode { background: rgba(76,175,80,0.85); color: #fff; }
+
+.media-card .card-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    padding: 40px 10px 10px;
+}
+
+.media-card .card-overlay .card-quality {
+    font-size: 0.7rem;
+    color: var(--blue);
+    font-weight: 600;
+}
+
+.media-card .card-info {
+    padding: 10px;
+}
+
+.media-card .card-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-card .card-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-card .card-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+
+.media-card .card-rename {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    padding: 6px 0;
+    border-top: 1px solid var(--border);
+}
+
+.media-card .card-rename .rename-arrow {
+    color: var(--blue);
+    margin: 2px 0;
+}
+
+.media-card .card-rename .rename-from,
+.media-card .card-rename .rename-to {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.media-card .card-rename .rename-to {
+    color: var(--green);
+}
+
+.media-card .card-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.media-card .card-actions .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    border-radius: 0 0 7px 7px;
+}
+
+.media-card .card-actions .btn:first-child:not(:last-child) {
+    border-radius: 0 0 0 7px;
+}
+
+.media-card .card-actions .btn:last-child:not(:first-child) {
+    border-radius: 0 0 7px 0;
+}
+
 /* File table */
 .file-table {
     width: 100%;
@@ -352,4 +546,5 @@ header h1 span {
     .file-table { font-size: 0.8rem; }
     .file-table .filename { max-width: 150px; }
     .toolbar { flex-direction: column; align-items: stretch; }
+    .card-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 }

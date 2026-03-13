@@ -16,6 +16,7 @@ class FilePreview(BaseModel):
     year: int | None = None
     season: int | None = None
     episode: int | None = None
+    poster_url: str | None = None
     resolution: str | None = None
     quality_score: int = 0
     file_size: int | None = None

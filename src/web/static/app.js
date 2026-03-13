@@ -2,8 +2,10 @@ const API = '';
 let currentFilter = 'all';
 let currentTypeFilter = 'all';
 let currentTab = 'files';
+let currentView = localStorage.getItem('renamarr_view') || 'cards';
 let pollInterval = null;
 let apiKey = localStorage.getItem('renamarr_api_key') || '';
+let cachedFiles = [];
 
 // API helpers
 function getHeaders(extra) {
@@ -33,6 +35,13 @@ function switchTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tab));
+}
+
+// View switching
+function setView(view) {
+    currentView = view;
+    localStorage.setItem('renamarr_view', view);
+    renderFiles(cachedFiles);
 }
 
 // Format file size
@@ -103,6 +112,7 @@ async function loadScan() {
             return;
         }
 
+        cachedFiles = scan.files;
         renderFiles(scan.files);
         renderDuplicates(scan.duplicates);
         updateTabBadges(scan);
@@ -117,19 +127,13 @@ function showEmpty(tab, message) {
 }
 
 function updateTabBadges(scan) {
-    const pending = scan.files.filter(f => f.status === 'pending').length;
     const dups = scan.duplicates.length;
     document.getElementById('badge-files').textContent = scan.files.length;
     document.getElementById('badge-duplicates').textContent = dups;
 }
 
-// Render file table
-function renderFiles(files) {
-    // Apply type filter first
-    const typeFiltered = currentTypeFilter === 'all' ? files : files.filter(f => f.media_type === currentTypeFilter);
-    // Then apply status filter
-    const filtered = currentFilter === 'all' ? typeFiltered : typeFiltered.filter(f => f.status === currentFilter);
-
+// Build toolbar HTML (shared between views)
+function buildToolbar(files, typeFiltered) {
     const movieCount = files.filter(f => f.media_type === 'movie').length;
     const tvCount = files.filter(f => f.media_type === 'episode').length;
 
@@ -139,6 +143,11 @@ function renderFiles(files) {
     [['all', 'All (' + files.length + ')'], ['movie', 'Movies (' + movieCount + ')'], ['episode', 'TV (' + tvCount + ')']].forEach(([key, label]) => {
         html += '<button class="filter-btn' + (currentTypeFilter === key ? ' active' : '') + '" onclick="setTypeFilter(\'' + key + '\')">' + label + '</button>';
     });
+    html += '</div>';
+    html += '<div class="toolbar-spacer"></div>';
+    html += '<div class="view-toggle">';
+    html += '<button class="view-toggle-btn' + (currentView === 'cards' ? ' active' : '') + '" onclick="setView(\'cards\')" title="Card view">Cards</button>';
+    html += '<button class="view-toggle-btn' + (currentView === 'table' ? ' active' : '') + '" onclick="setView(\'table\')" title="Table view">Table</button>';
     html += '</div>';
     html += '</div>';
 
@@ -155,7 +164,83 @@ function renderFiles(files) {
     html += '<button class="btn btn-danger btn-sm" onclick="rejectAll()">Reject All</button>';
     html += '</div>';
 
-    html += '<table class="file-table"><thead><tr>';
+    return html;
+}
+
+// Render file cards (poster view)
+function renderCards(filtered) {
+    let html = '<div class="card-grid">';
+
+    for (const f of filtered) {
+        html += '<div class="media-card">';
+        html += '<div class="poster-wrapper">';
+
+        if (f.poster_url) {
+            html += '<img src="' + esc(f.poster_url) + '" alt="' + esc(f.title) + '" loading="lazy">';
+        } else {
+            html += '<div class="poster-placeholder">';
+            html += '<div class="placeholder-icon">' + (f.media_type === 'movie' ? '&#127909;' : '&#128250;') + '</div>';
+            html += '<div>' + esc(f.title || f.source_filename) + '</div>';
+            html += '</div>';
+        }
+
+        // Status badge
+        html += '<div class="card-badge"><span class="badge badge-' + f.status + '">' + f.status + '</span></div>';
+        // Type badge
+        html += '<span class="card-type-badge card-type-' + f.media_type + '">' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</span>';
+
+        // Quality overlay
+        if (f.resolution) {
+            html += '<div class="card-overlay"><span class="card-quality">' + f.resolution + '</span></div>';
+        }
+
+        html += '</div>'; // poster-wrapper
+
+        html += '<div class="card-info">';
+        html += '<div class="card-title" title="' + esc(f.title) + '">' + esc(f.title || 'Unknown') + '</div>';
+
+        let subtitle = '';
+        if (f.media_type === 'movie' && f.year) {
+            subtitle = '(' + f.year + ')';
+        } else if (f.media_type === 'episode' && f.season != null) {
+            subtitle = 'S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode).padStart(2, '0');
+        }
+        if (subtitle) {
+            html += '<div class="card-subtitle">' + subtitle + '</div>';
+        }
+
+        html += '<div class="card-meta">';
+        html += '<span>' + formatSize(f.file_size) + '</span>';
+        html += '</div>';
+
+        html += '<div class="card-rename">';
+        html += '<div class="rename-from" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</div>';
+        html += '<div class="rename-arrow">&darr;</div>';
+        html += '<div class="rename-to" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</div>';
+        html += '</div>';
+        html += '</div>'; // card-info
+
+        html += '<div class="card-actions">';
+        if (f.status === 'pending') {
+            html += '<button class="btn btn-success" onclick="approveFile(\'' + f.id + '\')">Approve</button>';
+            html += '<button class="btn btn-danger" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
+        } else if (f.status === 'approved' || f.status === 'rejected') {
+            html += '<button class="btn btn-outline" onclick="resetFile(\'' + f.id + '\')">Undo</button>';
+        } else {
+            html += '<button class="btn btn-outline" disabled>' + f.status + '</button>';
+        }
+        html += '</div>';
+
+        html += '</div>'; // media-card
+    }
+
+    html += '</div>';
+    return html;
+}
+
+// Render file table
+function renderTable(filtered) {
+    let html = '<table class="file-table"><thead><tr>';
     html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Size</th><th>Actions</th>';
     html += '</tr></thead><tbody>';
 
@@ -180,9 +265,23 @@ function renderFiles(files) {
     }
 
     html += '</tbody></table>';
+    return html;
+}
+
+// Render files (dispatches to card or table view)
+function renderFiles(files) {
+    cachedFiles = files;
+    const typeFiltered = currentTypeFilter === 'all' ? files : files.filter(f => f.media_type === currentTypeFilter);
+    const filtered = currentFilter === 'all' ? typeFiltered : typeFiltered.filter(f => f.status === currentFilter);
+
+    let html = buildToolbar(files, typeFiltered);
 
     if (filtered.length === 0) {
         html += '<div class="empty-state"><p>No files match this filter.</p></div>';
+    } else if (currentView === 'cards') {
+        html += renderCards(filtered);
+    } else {
+        html += renderTable(filtered);
     }
 
     document.getElementById('tab-files').innerHTML = html;
@@ -300,12 +399,12 @@ async function executeApproved() {
 
 function setFilter(f) {
     currentFilter = f;
-    loadScan();
+    renderFiles(cachedFiles);
 }
 
 function setTypeFilter(f) {
     currentTypeFilter = f;
-    loadScan();
+    renderFiles(cachedFiles);
 }
 
 function esc(s) {

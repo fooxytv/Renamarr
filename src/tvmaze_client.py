@@ -23,6 +23,7 @@ class TVShowResult:
     name: str
     premiered: str | None  # YYYY-MM-DD format
     summary: str
+    poster: str | None = None
 
     @property
     def year(self) -> int | None:
@@ -130,12 +131,14 @@ class TVMazeClient:
         results = []
         for item in data:
             show = item.get("show", {})
+            image = show.get("image") or {}
             results.append(
                 TVShowResult(
                     tvmaze_id=show.get("id", 0),
                     name=show.get("name", ""),
                     premiered=show.get("premiered"),
                     summary=show.get("summary") or "",
+                    poster=image.get("medium") or image.get("original"),
                 )
             )
 
@@ -154,11 +157,13 @@ class TVMazeClient:
         if not data:
             return None
 
+        image = data.get("image") or {}
         return TVShowResult(
             tvmaze_id=data.get("id", 0),
             name=data.get("name", ""),
             premiered=data.get("premiered"),
             summary=data.get("summary") or "",
+            poster=image.get("medium") or image.get("original"),
         )
 
     async def get_episode(

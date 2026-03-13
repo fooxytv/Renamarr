@@ -268,14 +268,19 @@ class RenamarrWeb:
             year = None
             season = None
             episode = None
+            poster_url = None
 
             if op.media_info.is_movie:
                 title = op.omdb_movie.title if op.omdb_movie else (op.media_info.title or "Unknown")
                 year = op.omdb_movie.year if op.omdb_movie else op.media_info.year
+                if op.omdb_movie and op.omdb_movie.poster:
+                    poster_url = op.omdb_movie.poster
             elif op.media_info.is_episode:
                 title = op.tvmaze_show.name if op.tvmaze_show else (op.media_info.show_name or "Unknown")
                 season = op.media_info.season
                 episode = op.media_info.episode
+                if op.tvmaze_show and op.tvmaze_show.poster:
+                    poster_url = op.tvmaze_show.poster
 
             preview = FilePreview(
                 id=file_id,
@@ -288,6 +293,7 @@ class RenamarrWeb:
                 year=year,
                 season=season,
                 episode=episode,
+                poster_url=poster_url,
                 resolution=op.media_info.quality.resolution,
                 quality_score=op.media_info.quality.quality_score(),
                 file_size=op.media_info.quality.file_size,
