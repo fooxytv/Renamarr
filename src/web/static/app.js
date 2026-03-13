@@ -560,6 +560,23 @@ function updateFileStatus(id, status) {
         renderDuplicates(window._cachedDuplicates);
     }
     renderFiles(cachedFiles);
+    // Update Run button and status counts optimistically
+    updateStatusFromCache();
+}
+
+function updateStatusFromCache() {
+    const approved = cachedFiles.filter(f => f.status === 'approved').length;
+    const rejected = cachedFiles.filter(f => f.status === 'rejected').length;
+    const pending = cachedFiles.filter(f => f.status === 'pending').length;
+    const completed = cachedFiles.filter(f => f.status === 'completed').length;
+    const correct = cachedFiles.filter(f => f.already_correct).length;
+    document.getElementById('stat-total').textContent = cachedFiles.length;
+    document.getElementById('stat-pending').textContent = pending;
+    document.getElementById('stat-approved').textContent = approved;
+    document.getElementById('stat-rejected').textContent = rejected;
+    document.getElementById('stat-completed').textContent = completed;
+    document.getElementById('stat-correct').textContent = correct;
+    document.getElementById('btn-execute').disabled = (approved === 0 && rejected === 0);
 }
 
 async function approveFile(id) {
