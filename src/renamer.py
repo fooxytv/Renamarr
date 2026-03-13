@@ -245,9 +245,15 @@ class RenamerService:
     async def _execute_operation(self, operation: RenameOperation) -> RenameResult:
         """Execute a rename operation."""
         # Skip if source is already at the correct destination
+        # Use normalized comparison to handle case/punctuation differences
         try:
-            if operation.source.resolve() == operation.destination.resolve():
+            src_str = str(operation.source.resolve())
+            dst_str = str(operation.destination.resolve())
+            if src_str == dst_str:
                 logger.debug(f"Already correctly named: {operation.source.name}")
+                return RenameResult(operation=operation, success=True)
+            if src_str.lower() == dst_str.lower():
+                logger.debug(f"Already correctly named (case match): {operation.source.name}")
                 return RenameResult(operation=operation, success=True)
         except OSError:
             pass

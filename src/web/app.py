@@ -330,10 +330,33 @@ class RenamarrWeb:
         for op in operations:
             file_id = str(uuid.uuid4())
             # Check if already correctly named
+            # Compare with multiple levels of normalization because OMDb
+            # titles often differ from folder names on disk (case, punctuation)
+            already_correct = False
             try:
-                already_correct = op.source.resolve() == op.destination.resolve()
+                src_resolved = str(op.source.resolve())
+                dst_resolved = str(op.destination.resolve())
+                if src_resolved == dst_resolved:
+                    already_correct = True
+                elif src_resolved.lower() == dst_resolved.lower():
+                    # Case-insensitive: "Space Jam a New Legacy" vs "Space Jam A New Legacy"
+                    already_correct = True
+                    logger.debug(f"Case-insensitive match: {op.source.name}")
+                else:
+                    # Normalize: strip punctuation for comparison
+                    # Handles "Alien vs Predator" vs "Alien vs. Predator"
+                    import re as _re
+                    norm_src = _re.sub(r'[^a-z0-9/\\]', '', src_resolved.lower())
+                    norm_dst = _re.sub(r'[^a-z0-9/\\]', '', dst_resolved.lower())
+                    if norm_src == norm_dst:
+                        already_correct = True
+                        logger.debug(f"Normalized match: {op.source.name}")
+                    else:
+                        logger.debug(
+                            f"Path mismatch: src={src_resolved} dst={dst_resolved}"
+                        )
             except OSError:
-                already_correct = False
+                pass
 
             # Also check if destination already exists in library
             # (file was previously moved but a copy remains in watch dir)
@@ -341,7 +364,7 @@ class RenamarrWeb:
                 try:
                     if op.destination.exists():
                         already_correct = True
-                        logger.debug(f"File already exists in library: {op.destination}")
+                        logger.info(f"File already exists in library: {op.destination}")
                 except OSError:
                     pass
 
