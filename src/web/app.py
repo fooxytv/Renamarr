@@ -540,24 +540,30 @@ class RenamarrWeb:
             except Exception as e:
                 logger.error(f"TVMaze retry failed for '{lookup_title}': {e}")
 
-        # Update the file preview
-        file_preview.title = new_title
-        file_preview.year = new_year
-        file_preview.poster_url = poster_url
-        file_preview.destination_filename = new_dest_filename
-        file_preview.destination_path = new_dest_path
+        # Only update if we got a result from the API
+        if new_title != file_preview.title or new_year != file_preview.year or poster_url:
+            file_preview.title = new_title
+            file_preview.year = new_year
+            if poster_url:
+                file_preview.poster_url = poster_url
+            file_preview.destination_filename = new_dest_filename
+            file_preview.destination_path = new_dest_path
 
-        # Check if now correctly named
-        try:
-            source = Path(file_preview.source_path)
-            dest = Path(new_dest_path)
-            file_preview.already_correct = source.resolve() == dest.resolve()
-            if file_preview.already_correct:
-                file_preview.status = "correct"
-        except OSError:
-            pass
+            # Check if now correctly named
+            try:
+                source = Path(file_preview.source_path)
+                dest = Path(new_dest_path)
+                file_preview.already_correct = source.resolve() == dest.resolve()
+                if file_preview.already_correct:
+                    file_preview.status = "correct"
+            except OSError:
+                pass
 
-        self.store.save_scan(scan)
+            self.store.save_scan(scan)
+            logger.info(f"Updated metadata for '{file_preview.source_filename}': {new_title} ({new_year})")
+        else:
+            logger.warning(f"No API result for '{lookup_title}' — metadata unchanged")
+
         return file_preview.model_dump()
 
     def list_trash(self) -> list[dict]:
