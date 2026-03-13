@@ -59,7 +59,7 @@ from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
 from ..renamer import RenameOperation, RenamerService
 from ..tvmaze_client import TVMazeClient
-from ..utils import format_size
+from ..utils import format_size, sanitize_filename
 from .models import (
     DuplicateGroupPreview,
     FilePreview,
@@ -566,6 +566,62 @@ class RenamarrWeb:
 
         return file_preview.model_dump()
 
+    def edit_file_destination(
+        self, file_id: str, folder_name: str | None = None, filename: str | None = None
+    ) -> dict | None:
+        """Manually edit a file's destination folder and/or filename.
+
+        Returns the updated file preview dict, or None if not found.
+        """
+        scan = self.store.load_scan()
+        if not scan:
+            return None
+
+        file_preview = None
+        for f in scan.files:
+            if f.id == file_id:
+                file_preview = f
+                break
+        if not file_preview:
+            return None
+
+        op = self._operations.get(file_id)
+        current_dest = Path(file_preview.destination_path)
+
+        # Determine the output root (strip the relative folder/filename)
+        # e.g. /media/movies/Title (2020)/Title (2020).mkv -> /media/movies
+        output_root = current_dest.parent.parent
+
+        new_folder = sanitize_filename(folder_name) if folder_name else current_dest.parent.name
+        new_file = sanitize_filename(filename) if filename else current_dest.name
+
+        # Ensure the filename keeps its extension
+        if not Path(new_file).suffix and current_dest.suffix:
+            new_file += current_dest.suffix
+
+        new_dest = output_root / new_folder / new_file
+
+        file_preview.destination_path = str(new_dest)
+        file_preview.destination_filename = new_dest.name
+
+        # Update the operation cache
+        if op:
+            op.destination = new_dest
+            self._serialize_operations()
+
+        # Check if now correctly named
+        try:
+            source = Path(file_preview.source_path)
+            file_preview.already_correct = source.resolve() == new_dest.resolve()
+            if file_preview.already_correct:
+                file_preview.status = "correct"
+        except OSError:
+            pass
+
+        self.store.save_scan(scan)
+        logger.info(f"Manual edit: {file_preview.source_filename} -> {new_folder}/{new_file}")
+        return file_preview.model_dump()
+
     def list_trash(self) -> list[dict]:
         """List files in the duplicates/trash folder."""
         dup_folder = self.config.duplicates.duplicates_folder
@@ -1003,6 +1059,18 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             except (ValueError, TypeError):
                 year = None
         result = await web.retry_file_lookup(file_id, title=title, year=year)
+        if not result:
+            raise HTTPException(404, "File not found")
+        return result
+
+    @app.post("/api/files/{file_id}/edit-destination", dependencies=[Depends(_verify_api_key)])
+    async def edit_file_destination(file_id: str, request: Request):
+        body = await request.json()
+        folder_name = body.get("folder_name")
+        filename = body.get("filename")
+        if not folder_name and not filename:
+            raise HTTPException(400, "Provide folder_name and/or filename")
+        result = web.edit_file_destination(file_id, folder_name=folder_name, filename=filename)
         if not result:
             raise HTTPException(404, "File not found")
         return result

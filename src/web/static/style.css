@@ -170,6 +170,12 @@ header .container {
     cursor: not-allowed;
 }
 
+.btn-icon-sm {
+    width: 22px;
+    height: 22px;
+    font-size: 0.75rem;
+}
+
 .meta-actions {
     white-space: nowrap;
 }
@@ -409,6 +415,17 @@ header .container {
 
 .media-card .card-rename .rename-to {
     color: var(--green);
+}
+
+.media-card .card-rename .rename-to-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.media-card .card-rename .rename-to-row .rename-to {
+    flex: 1;
+    min-width: 0;
 }
 
 .media-card .card-actions {

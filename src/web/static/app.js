@@ -230,7 +230,10 @@ function renderCards(filtered) {
         html += '<div class="card-rename">';
         html += '<div class="rename-from" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</div>';
         html += '<div class="rename-arrow">&darr;</div>';
+        html += '<div class="rename-to-row">';
         html += '<div class="rename-to" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</div>';
+        html += '<button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(getDestFolder(f.destination_path)) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button>';
+        html += '</div>';
         html += '</div>';
         html += '</div>'; // card-info
 
@@ -264,7 +267,7 @@ function renderTable(filtered) {
         html += '<td>' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</td>';
         html += '<td class="filename" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</td>';
         html += '<td class="arrow">&rarr;</td>';
-        html += '<td class="filename" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + '</td>';
+        html += '<td class="filename" title="' + esc(f.destination_path) + '">' + esc(f.destination_filename) + ' <button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(getDestFolder(f.destination_path)) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button></td>';
         html += '<td>' + (f.resolution || '-') + '</td>';
         html += '<td>' + formatSize(f.file_size) + '</td>';
         html += '<td class="meta-actions">';
@@ -655,6 +658,18 @@ function esc(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function escSingleQuote(s) {
+    if (!s) return '';
+    return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function getDestFolder(destPath) {
+    if (!destPath) return '';
+    // "/media/movies/Title (2020)/Title (2020).mkv" -> "Title (2020)"
+    const parts = destPath.replace(/\\/g, '/').split('/');
+    return parts.length >= 2 ? parts[parts.length - 2] : '';
+}
+
 // Trash management
 let trashAuthRequired = false;
 
@@ -993,6 +1008,26 @@ async function retryLookup(id) {
     }
     btn.disabled = false;
     btn.innerHTML = '&#x21bb;';
+}
+
+async function editDestination(id, currentFolder, currentFilename) {
+    const folder = prompt('Folder name (e.g. "Movie Title (2020)"):', currentFolder);
+    if (folder === null) return;
+    const filename = prompt('Filename (e.g. "Movie Title (2020).mkv"):', currentFilename);
+    if (filename === null) return;
+    const body = {};
+    if (folder.trim()) body.folder_name = folder.trim();
+    if (filename.trim()) body.filename = filename.trim();
+    if (!body.folder_name && !body.filename) return;
+    try {
+        const result = await api('POST', '/api/files/' + id + '/edit-destination', body);
+        if (result.detail) {
+            alert('Edit failed: ' + result.detail);
+        }
+        await loadScan();
+    } catch (e) {
+        alert('Edit failed: ' + e.message);
+    }
 }
 
 async function editMetadata(id, currentTitle, currentYear) {
