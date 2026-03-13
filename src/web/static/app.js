@@ -73,7 +73,7 @@ async function refreshStatus() {
     btnScan.disabled = s.scanning;
     btnScan.innerHTML = s.scanning ? '<span class="btn-spinner"></span> Scanning...' : 'Scan Now';
     document.getElementById('btn-cancel').style.display = s.scanning ? '' : 'none';
-    document.getElementById('btn-execute').disabled = s.scanning || s.approved === 0;
+    document.getElementById('btn-execute').disabled = s.scanning || (s.approved === 0 && s.rejected === 0);
 
     if (s.scanning) {
         startPolling();
