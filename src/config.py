@@ -45,7 +45,12 @@ class OptionsConfig(BaseModel):
 
     dry_run: bool = Field(default=False, description="Preview changes without applying")
     scan_interval: int = Field(default=300, description="Interval between scans in seconds")
+    scheduled_scan: bool = Field(default=False, description="Enable scheduled background scans")
     min_file_age: int = Field(default=60, description="Minimum file age before processing")
+    auto_approve_threshold: int = Field(
+        default=0,
+        description="Auto-approve files with confidence >= this (0 = disabled, recommended: 90)",
+    )
 
 
 class DuplicatesConfig(BaseModel):

@@ -187,6 +187,75 @@ class DiscordNotifier:
 
         await self._send([embed])
 
+    async def review_needed(
+        self,
+        files: list[dict],
+    ) -> None:
+        """Notify about files needing manual review (low confidence).
+
+        files: list of {"filename": str, "title": str, "confidence": int,
+                        "file_id": str, "media_type": str}
+        """
+        if not files:
+            return
+
+        embed = {
+            "title": f"Review Needed - {len(files)} File{'s' if len(files) != 1 else ''}",
+            "color": 16750848,  # Orange
+            "description": "These files had low confidence matches and need your review.",
+            "fields": [],
+        }
+
+        for f in files[:10]:
+            value = f"**Match:** {f['title']}\n**Confidence:** {f['confidence']}%"
+            if self.web_url:
+                approve_url = f"{self.web_url}/api/files/{f['file_id']}/approve"
+                reject_url = f"{self.web_url}/api/files/{f['file_id']}/reject"
+                value += f"\n[Approve]({approve_url}) | [Reject]({reject_url}) | [Open UI]({self.web_url})"
+            embed["fields"].append({
+                "name": f['filename'],
+                "value": value,
+            })
+
+        if len(files) > 10:
+            remaining = len(files) - 10
+            if self.web_url:
+                embed["footer"] = {"text": f"...and {remaining} more. Open the UI to review all."}
+            else:
+                embed["footer"] = {"text": f"...and {remaining} more."}
+
+        await self._send([embed])
+
+    async def auto_approved(
+        self,
+        count: int,
+        files: list[dict] | None = None,
+    ) -> None:
+        """Notify about files that were auto-approved due to high confidence.
+
+        files: list of {"filename": str, "title": str, "confidence": int}
+        """
+        if count == 0:
+            return
+
+        embed = {
+            "title": f"Auto-Approved - {count} File{'s' if count != 1 else ''}",
+            "color": 3066993,  # Green
+        }
+
+        if files:
+            lines = []
+            for f in files[:10]:
+                lines.append(f"{f['filename']} -> {f['title']} ({f['confidence']}%)")
+            if count > 10:
+                lines.append(f"...and {count - 10} more")
+            embed["description"] = "```\n" + "\n".join(lines) + "\n```"
+
+        if self.web_url:
+            embed["footer"] = {"text": f"Review in UI: {self.web_url}"}
+
+        await self._send([embed])
+
     async def scan_failed(self, error: str) -> None:
         """Notify that a scan failed."""
         embed = {

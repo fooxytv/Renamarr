@@ -51,6 +51,7 @@ class LogBuffer(logging.Handler):
 
 
 log_buffer = LogBuffer()
+from ..confidence import score_movie_match, score_episode_match
 from ..config import Config
 from ..duplicates import DuplicateHandler
 from ..library_dedup import LibraryDeduplicator, LibraryFolderScanner
@@ -128,6 +129,9 @@ class RenamarrWeb:
         self._notifier = DiscordNotifier()
         # Cache operations between preview and execute (in-memory + persisted)
         self._operations: dict[str, RenameOperation] = {}
+        # Scheduled scan state
+        self._scheduler_task: asyncio.Task | None = None
+        self._next_scan_at: datetime | None = None
         # Load persisted operations on startup
         self._load_persisted_operations()
 
@@ -408,9 +412,24 @@ class RenamarrWeb:
             duplicate_handler=duplicate_handler,
         )
 
+        # Start scheduled scan if enabled
+        if self.config.options.scheduled_scan and self.config.options.scan_interval > 0:
+            self._scheduler_task = asyncio.create_task(self._scan_scheduler())
+            logger.info(
+                f"Scheduled scans enabled: every {self.config.options.scan_interval}s"
+            )
+
     async def shutdown(self) -> None:
         """Clean up API clients. Waits for any running scan to finish first."""
         self._shutting_down = True
+
+        # Stop scheduler
+        if self._scheduler_task and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
 
         # Wait for scan to complete before closing clients
         if self._scan_task and not self._scan_task.done():
@@ -431,6 +450,49 @@ class RenamarrWeb:
             await self._tvmaze_client.__aexit__(None, None, None)
         if self.db:
             self.db.close()
+
+    def _compute_confidence(self, op: RenameOperation) -> int:
+        """Compute confidence score for a rename operation."""
+        if op.media_info.is_movie and op.omdb_movie:
+            return score_movie_match(
+                parsed_title=op.media_info.title or "",
+                parsed_year=op.media_info.year,
+                api_title=op.omdb_movie.title,
+                api_year=op.omdb_movie.year,
+            )
+        elif op.media_info.is_episode and op.tvmaze_show:
+            return score_episode_match(
+                parsed_show=op.media_info.show_name or "",
+                parsed_year=op.media_info.year,
+                api_show=op.tvmaze_show.name,
+                api_year=op.tvmaze_show.year,
+                has_episode_match=op.tvmaze_episode is not None,
+            )
+        return 0
+
+    async def _scan_scheduler(self) -> None:
+        """Background task that triggers scans on a schedule."""
+        interval = self.config.options.scan_interval
+        logger.info(f"Scan scheduler started (interval: {interval}s)")
+        try:
+            while not self._shutting_down:
+                from datetime import timedelta
+                self._next_scan_at = datetime.now() + timedelta(seconds=interval)
+                logger.debug(f"Next scheduled scan at {self._next_scan_at.isoformat()}")
+                await asyncio.sleep(interval)
+                if self._shutting_down:
+                    break
+                if self.scanning:
+                    logger.info("Scheduled scan skipped: scan already in progress")
+                    continue
+                logger.info("Starting scheduled scan")
+                self.scanning = True
+                self._scan_task = asyncio.create_task(self.run_scan("all"))
+                await self._scan_task
+        except asyncio.CancelledError:
+            logger.info("Scan scheduler stopped")
+        except Exception as e:
+            logger.error(f"Scan scheduler error: {e}", exc_info=True)
 
     async def run_scan(self, media_type: str = "all") -> None:
         """Run a scan in the background.
@@ -508,13 +570,52 @@ class RenamarrWeb:
                     all_files.extend(files)
                     all_duplicates.extend(dup_previews)
 
+            # Auto-approve high-confidence files
+            threshold = self.config.options.auto_approve_threshold
+            auto_approved_files = []
+            review_files = []
+
+            if threshold > 0:
+                for f in all_files:
+                    if f.status != "pending":
+                        continue
+                    if f.confidence >= threshold:
+                        f.status = "approved"
+                        auto_approved_files.append({
+                            "filename": f.source_filename,
+                            "title": f.title,
+                            "confidence": f.confidence,
+                        })
+                        self.db.save_decision(
+                            file_path=f.source_path,
+                            file_size=f.file_size,
+                            filename=f.source_filename,
+                            media_type=f.media_type,
+                            status="approved",
+                            chosen_destination=f.destination_path,
+                        )
+                    elif f.confidence > 0:
+                        review_files.append({
+                            "filename": f.source_filename,
+                            "title": f.title,
+                            "confidence": f.confidence,
+                            "file_id": f.id,
+                            "media_type": f.media_type,
+                        })
+
+                if auto_approved_files:
+                    logger.info(
+                        f"Auto-approved {len(auto_approved_files)} files "
+                        f"(confidence >= {threshold}%)"
+                    )
+
             scan.files = all_files
             scan.duplicates = all_duplicates
             scan.status = "completed"
             scan.completed_at = datetime.now().isoformat()
             logger.info(f"Scan complete: {len(all_files)} files, {len(all_duplicates)} duplicate groups")
 
-            # Send Discord notification
+            # Send Discord notifications
             pending = sum(1 for f in all_files if f.status == "pending")
             correct = sum(1 for f in all_files if f.already_correct)
             movies = sum(1 for f in all_files if f.media_type == "movie")
@@ -533,6 +634,17 @@ class RenamarrWeb:
                 pending_tv=pending_tv,
                 duration_seconds=duration,
             )
+
+            # Notify about auto-approved files
+            if auto_approved_files:
+                await self._notifier.auto_approved(
+                    count=len(auto_approved_files),
+                    files=auto_approved_files,
+                )
+
+            # Notify about files needing review (low confidence)
+            if review_files:
+                await self._notifier.review_needed(files=review_files)
 
         except Exception as e:
             logger.error(f"Scan failed: {e}", exc_info=True)
@@ -611,6 +723,8 @@ class RenamarrWeb:
                 if op.tvmaze_show and op.tvmaze_show.poster:
                     poster_url = op.tvmaze_show.poster
 
+            confidence = self._compute_confidence(op)
+
             preview = FilePreview(
                 id=file_id,
                 source_path=str(op.source),
@@ -626,6 +740,7 @@ class RenamarrWeb:
                 resolution=op.media_info.quality.resolution,
                 quality_score=op.media_info.quality.quality_score(),
                 file_size=op.media_info.quality.file_size,
+                confidence=confidence,
                 status=restored_status or ("correct" if already_correct else "pending"),
                 already_correct=already_correct,
             )
@@ -1265,7 +1380,11 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             version=__version__,
             scanning=web.scanning,
             dry_run=config.options.dry_run,
+            auto_approve_threshold=config.options.auto_approve_threshold,
+            scheduled_scan=config.options.scheduled_scan,
         )
+        if web._next_scan_at:
+            resp.next_scan_at = web._next_scan_at.isoformat()
         if scan:
             resp.current_scan_id = scan.scan_id
             resp.total_files = len(scan.files)
@@ -1273,6 +1392,10 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             resp.approved = sum(1 for f in scan.files if f.status == "approved")
             resp.rejected = sum(1 for f in scan.files if f.status == "rejected")
             resp.ignored = sum(1 for f in scan.files if f.status == "ignored")
+            resp.auto_approved = sum(
+                1 for f in scan.files
+                if f.status == "approved" and f.confidence >= config.options.auto_approve_threshold > 0
+            )
             resp.completed = sum(1 for f in scan.files if f.status == "completed")
             resp.failed = sum(1 for f in scan.files if f.status == "failed")
         return resp

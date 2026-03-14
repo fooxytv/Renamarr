@@ -65,8 +65,41 @@ async function refreshStatus() {
     document.getElementById('stat-pending').textContent = s.pending;
     document.getElementById('stat-approved').textContent = s.approved;
     document.getElementById('stat-rejected').textContent = s.rejected;
+    document.getElementById('stat-ignored').textContent = s.ignored;
     document.getElementById('stat-completed').textContent = s.completed;
     document.getElementById('stat-correct').textContent = correct > 0 ? correct : 0;
+
+    // Show scheduled scan info
+    const nextScanEl = document.getElementById('next-scan-info');
+    if (nextScanEl) {
+        if (s.scheduled_scan && s.next_scan_at) {
+            const next = new Date(s.next_scan_at);
+            const now = new Date();
+            const diffMs = next - now;
+            if (diffMs > 0) {
+                const mins = Math.floor(diffMs / 60000);
+                const secs = Math.floor((diffMs % 60000) / 1000);
+                nextScanEl.textContent = 'Next scan in ' + (mins > 0 ? mins + 'm ' : '') + secs + 's';
+                nextScanEl.style.display = '';
+            } else {
+                nextScanEl.textContent = 'Scheduled scan imminent';
+                nextScanEl.style.display = '';
+            }
+        } else {
+            nextScanEl.style.display = 'none';
+        }
+    }
+
+    // Show auto-approve threshold info
+    const autoInfo = document.getElementById('auto-approve-info');
+    if (autoInfo) {
+        if (s.auto_approve_threshold > 0) {
+            autoInfo.textContent = 'Auto-approve: ' + s.auto_approve_threshold + '%+' + (s.auto_approved > 0 ? ' (' + s.auto_approved + ' auto)' : '');
+            autoInfo.style.display = '';
+        } else {
+            autoInfo.style.display = 'none';
+        }
+    }
 
     if (s.version) document.getElementById('version-stamp').textContent = 'Renamarr v' + s.version;
     document.querySelectorAll('.scan-btn-group .btn').forEach(b => {
@@ -223,6 +256,10 @@ function renderCards(filtered) {
 
         html += '<div class="card-meta">';
         html += '<span>' + formatSize(f.file_size) + '</span>';
+        if (f.confidence > 0) {
+            let confClass = f.confidence >= 90 ? 'conf-high' : f.confidence >= 70 ? 'conf-med' : 'conf-low';
+            html += '<span class="confidence-badge ' + confClass + '" title="Match confidence">' + f.confidence + '%</span>';
+        }
         html += '<span class="card-meta-actions">';
         html += '<button class="btn-icon" onclick="retryLookup(\'' + f.id + '\')" title="Retry API lookup">&#x21bb;</button>';
         html += '<button class="btn-icon" onclick="editMetadata(\'' + f.id + '\', \'' + esc(f.title || '') + '\', ' + (f.year || 'null') + ')" title="Edit metadata">&#x270E;</button>';
@@ -266,7 +303,7 @@ function renderCards(filtered) {
 // Render file table
 function renderTable(filtered) {
     let html = '<table class="file-table"><thead><tr>';
-    html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Size</th><th>Metadata</th><th>Actions</th>';
+    html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Conf.</th><th>Size</th><th>Metadata</th><th>Actions</th>';
     html += '</tr></thead><tbody>';
 
     for (const f of filtered) {
@@ -282,6 +319,12 @@ function renderTable(filtered) {
         }
         html += '<td class="filename" title="' + esc(f.destination_path) + '">' + tblDestDisplay + ' <button class="btn-icon btn-icon-sm" onclick="editDestination(\'' + f.id + '\', \'' + escSingleQuote(tblDestFolder) + '\', \'' + escSingleQuote(f.destination_filename || '') + '\')" title="Edit destination">&#x270E;</button></td>';
         html += '<td>' + (f.resolution || '-') + '</td>';
+        if (f.confidence > 0) {
+            let confClass = f.confidence >= 90 ? 'conf-high' : f.confidence >= 70 ? 'conf-med' : 'conf-low';
+            html += '<td><span class="confidence-badge ' + confClass + '">' + f.confidence + '%</span></td>';
+        } else {
+            html += '<td>-</td>';
+        }
         html += '<td>' + formatSize(f.file_size) + '</td>';
         html += '<td class="meta-actions">';
         html += '<button class="btn-icon" onclick="retryLookup(\'' + f.id + '\')" title="Retry API lookup">&#x21bb;</button>';
