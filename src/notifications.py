@@ -9,9 +9,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Max individual rich embeds before switching to a summary
-MAX_INDIVIDUAL_EMBEDS = 10
-
 # Discord allows ~30 requests/minute per webhook. We stay under at 25/min.
 DISCORD_RATE_LIMIT = 25
 DISCORD_RATE_WINDOW = 60.0
@@ -207,37 +204,13 @@ class DiscordNotifier:
         self, files: list[dict], color: int, footer_text: str,
         summary_title: str, show_actions: bool = False,
     ) -> None:
-        """Send individual embeds for the first N files, then a summary for the rest."""
+        """Send individual rich embeds for every file, all queued with rate limiting."""
         if not files:
             return
 
-        # Send individual rich embeds for the first batch
-        for f in files[:MAX_INDIVIDUAL_EMBEDS]:
+        for f in files:
             embed = self._build_file_embed(f, color, footer_text, show_actions)
             await self._send([embed])
-
-        # Summary for the rest
-        remaining = len(files) - MAX_INDIVIDUAL_EMBEDS
-        if remaining > 0:
-            summary = {
-                "title": summary_title,
-                "color": color,
-                "description": f"**+{remaining} more file{'s' if remaining != 1 else ''}** not shown individually.",
-            }
-            if self.web_url:
-                summary["description"] += f"\n[View all in Renamarr]({self.web_url})"
-            lines = []
-            for f in files[MAX_INDIVIDUAL_EMBEDS:MAX_INDIVIDUAL_EMBEDS + 20]:
-                conf = f.get("confidence", 0)
-                title = f.get("title") or f.get("filename", "?")
-                lines.append(f"{f.get('filename', '?')} → {title} ({conf}%)")
-            if remaining > 20:
-                lines.append(f"...and {remaining - 20} more")
-            summary["fields"] = [{
-                "name": "Files",
-                "value": "```\n" + "\n".join(lines) + "\n```",
-            }]
-            await self._send([summary])
 
     async def scan_completed(
         self,
