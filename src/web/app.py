@@ -286,16 +286,16 @@ class RenamarrWeb:
             tvmaze_show = None
             tvmaze_episode = None
 
-            if match["source"] == "omdb":
+            if match["source"] == "omdb" and match["imdb_id"]:
                 omdb_movie = MovieResult(
-                    imdb_id=match["imdb_id"] or "",
+                    imdb_id=match["imdb_id"],
                     title=match["omdb_title"] or "",
                     year=match["omdb_year"],
                     plot=match["omdb_plot"] or "",
                     poster=match["omdb_poster"],
                 )
                 media_info.tmdb_id = hash(match["imdb_id"])
-            elif match["source"] == "tvmaze":
+            elif match["source"] == "tvmaze" and match["tvmaze_show_id"]:
                 tvmaze_show = TVShowResult(
                     tvmaze_id=match["tvmaze_show_id"],
                     name=match["tvmaze_show_name"] or "",
@@ -314,6 +314,7 @@ class RenamarrWeb:
                         airdate=match["tvmaze_episode_airdate"],
                         summary=match["tvmaze_episode_summary"] or "",
                     )
+            # else: cached "no match" — omdb_movie/tvmaze_show stay None
 
             destination = Path(match["destination_path"])
 
@@ -396,6 +397,17 @@ class RenamarrWeb:
                     episode_number=op.tvmaze_episode.episode_number if op.tvmaze_episode else None,
                     destination_path=dest_path,
                     lookup_title=op.media_info.show_name or "",
+                    lookup_year=op.media_info.year,
+                )
+            else:
+                # No API match found — cache this so we don't re-query
+                source = "omdb" if op.media_info.is_movie else "tvmaze"
+                lookup = op.media_info.title if op.media_info.is_movie else op.media_info.show_name
+                self.db.save_no_match(
+                    media_file_id=media_file_id,
+                    source=source,
+                    destination_path=dest_path,
+                    lookup_title=lookup or "",
                     lookup_year=op.media_info.year,
                 )
         except Exception as e:

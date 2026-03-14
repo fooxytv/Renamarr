@@ -313,6 +313,32 @@ class RenamarrDB:
         )
         self._conn.commit()
 
+    def save_no_match(
+        self,
+        media_file_id: int,
+        source: str,
+        destination_path: str,
+        lookup_title: str,
+        lookup_year: int | None,
+    ) -> None:
+        """Cache a 'no match found' result so we don't re-query the API."""
+        now = datetime.now().isoformat()
+        self._conn.execute(
+            """INSERT INTO matches
+               (media_file_id, source, destination_path, lookup_title,
+                lookup_year, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(media_file_id) DO UPDATE SET
+                source=excluded.source,
+                destination_path=excluded.destination_path,
+                lookup_title=excluded.lookup_title,
+                lookup_year=excluded.lookup_year,
+                updated_at=excluded.updated_at""",
+            (media_file_id, source, destination_path, lookup_title,
+             lookup_year, now, now),
+        )
+        self._conn.commit()
+
     def clear_match(self, media_file_id: int) -> None:
         """Remove cached match (forces re-lookup on next scan)."""
         self._conn.execute(
