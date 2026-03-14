@@ -57,9 +57,10 @@ from ..library_dedup import LibraryDeduplicator, LibraryFolderScanner
 from ..formatter import PlexFormatter
 from ..notifications import DiscordNotifier
 from ..omdb_client import OMDbClient
+from ..database import RenamarrDB
 from ..renamer import RenameOperation, RenamerService
-from ..tvmaze_client import TVMazeClient
-from ..utils import format_size, sanitize_filename
+from ..tvmaze_client import TVMazeClient, TVShowResult, EpisodeResult
+from ..utils import format_size, is_video_file, sanitize_filename
 from .models import (
     DuplicateGroupPreview,
     FilePreview,
@@ -116,6 +117,7 @@ class RenamarrWeb:
     def __init__(self, config: Config, data_dir: Path):
         self.config = config
         self.store = ScanStore(data_dir)
+        self.db = RenamarrDB(data_dir)
         self.scanning = False
         self._shutting_down = False
         self._scan_task: asyncio.Task | None = None
@@ -168,6 +170,220 @@ class RenamarrWeb:
         if serialized:
             logger.info(f"Loaded {len(serialized)} persisted operations")
 
+    async def _scan_directory_cached(
+        self, directory: Path, media_type: str
+    ) -> tuple[list[RenameOperation], list]:
+        """Scan a directory using DB cache to skip API calls for unchanged files."""
+        from ..parser import parse_media_file
+
+        video_files = [f for f in directory.rglob("*") if is_video_file(f)]
+        logger.info(f"Found {len(video_files)} video files in {directory}")
+
+        operations: list[RenameOperation] = []
+        uncached_files: list[Path] = []
+        current_paths: set[str] = set()
+
+        for file_path in video_files:
+            try:
+                stat = file_path.stat()
+            except OSError:
+                continue
+            path_str = str(file_path)
+            current_paths.add(path_str)
+
+            # Check if file has a cached match we can reuse
+            media_file = self.db.get_media_file(path_str)
+            if media_file:
+                match = self.db.get_match(media_file["id"])
+                if match:
+                    # Always use manual overrides; use cache if file unchanged
+                    if match["is_manual_override"] or not self.db.file_changed(
+                        path_str, stat.st_size, stat.st_mtime
+                    ):
+                        op = self._rebuild_operation_from_cache(
+                            file_path, media_file, match
+                        )
+                        if op:
+                            operations.append(op)
+                            # Update mtime/size in DB for changed files
+                            self.db.upsert_media_file(
+                                path=path_str,
+                                filename=file_path.name,
+                                file_size=stat.st_size,
+                                mtime=stat.st_mtime,
+                                media_type=media_file["media_type"],
+                            )
+                            continue
+
+            uncached_files.append(file_path)
+
+        if uncached_files:
+            logger.info(
+                f"Cache hit: {len(operations)}, need API lookup: {len(uncached_files)}"
+            )
+        else:
+            logger.info(f"All {len(operations)} files served from cache")
+
+        # Do API lookups only for uncached/changed files
+        for file_path in uncached_files:
+            try:
+                op = await self._renamer.preview_file(file_path)
+                if op:
+                    operations.append(op)
+                    self._cache_operation_to_db(file_path, op)
+            except Exception as e:
+                logger.error(f"Error previewing {file_path.name}: {e}")
+
+        # Clean up stale DB entries for files no longer on disk
+        self.db.remove_stale_files(current_paths)
+
+        # Duplicate detection on all operations
+        media_infos = [op.media_info for op in operations]
+        duplicate_groups = self._renamer.duplicate_handler.find_duplicates(media_infos)
+        return operations, duplicate_groups
+
+    def _rebuild_operation_from_cache(
+        self, file_path: Path, media_file: dict, match: dict
+    ) -> RenameOperation | None:
+        """Reconstruct a RenameOperation from cached DB data."""
+        from ..omdb_client import MovieResult
+        from ..parser import MediaInfo, QualityInfo
+        from ..utils import get_associated_files
+
+        try:
+            media_info = MediaInfo(
+                path=file_path,
+                media_type=media_file["media_type"],
+                title=media_file["parsed_title"],
+                year=media_file["parsed_year"],
+                show_name=media_file["parsed_show_name"],
+                season=media_file["parsed_season"],
+                episode=media_file["parsed_episode"],
+                quality=QualityInfo(
+                    resolution=media_file["resolution"],
+                    file_size=media_file["file_size"],
+                ),
+            )
+
+            omdb_movie = None
+            tvmaze_show = None
+            tvmaze_episode = None
+
+            if match["source"] == "omdb":
+                omdb_movie = MovieResult(
+                    imdb_id=match["imdb_id"] or "",
+                    title=match["omdb_title"] or "",
+                    year=match["omdb_year"],
+                    plot=match["omdb_plot"] or "",
+                    poster=match["omdb_poster"],
+                )
+                media_info.tmdb_id = hash(match["imdb_id"])
+            elif match["source"] == "tvmaze":
+                tvmaze_show = TVShowResult(
+                    tvmaze_id=match["tvmaze_show_id"],
+                    name=match["tvmaze_show_name"] or "",
+                    premiered=match["tvmaze_show_premiered"],
+                    summary=match["tvmaze_show_summary"] or "",
+                    poster=match["tvmaze_show_poster"],
+                )
+                media_info.tmdb_id = match["tvmaze_show_id"]
+                if match["tvmaze_episode_id"]:
+                    tvmaze_episode = EpisodeResult(
+                        episode_id=match["tvmaze_episode_id"],
+                        show_id=match["tvmaze_show_id"],
+                        season_number=match["tvmaze_season"] or 1,
+                        episode_number=match["tvmaze_episode_number"] or 1,
+                        name=match["tvmaze_episode_name"] or "",
+                        airdate=match["tvmaze_episode_airdate"],
+                        summary=match["tvmaze_episode_summary"] or "",
+                    )
+
+            destination = Path(match["destination_path"])
+
+            # Rebuild associated files from disk (they may have changed)
+            associated = get_associated_files(file_path)
+            associated_ops = []
+            for assoc_file in associated:
+                assoc_suffix = assoc_file.suffix
+                assoc_stem = assoc_file.stem
+                dest_stem = destination.stem
+                if "." in assoc_stem:
+                    parts = assoc_stem.rsplit(".", 1)
+                    lang_code = parts[-1]
+                    if len(lang_code) in (2, 3):
+                        new_name = f"{dest_stem}.{lang_code}{assoc_suffix}"
+                    else:
+                        new_name = f"{dest_stem}{assoc_suffix}"
+                else:
+                    new_name = f"{dest_stem}{assoc_suffix}"
+                associated_ops.append((assoc_file, destination.parent / new_name))
+
+            return RenameOperation(
+                source=file_path,
+                destination=destination,
+                media_info=media_info,
+                omdb_movie=omdb_movie,
+                tvmaze_show=tvmaze_show,
+                tvmaze_episode=tvmaze_episode,
+                associated_files=associated_ops,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to rebuild from cache: {file_path.name}: {e}")
+            return None
+
+    def _cache_operation_to_db(self, file_path: Path, op: RenameOperation) -> None:
+        """Save a fresh API lookup result to the DB cache."""
+        try:
+            stat = file_path.stat()
+            media_file_id = self.db.upsert_media_file(
+                path=str(file_path),
+                filename=file_path.name,
+                file_size=stat.st_size,
+                mtime=stat.st_mtime,
+                media_type=op.media_info.media_type,
+                parsed_title=op.media_info.title,
+                parsed_year=op.media_info.year,
+                parsed_show_name=op.media_info.show_name,
+                parsed_season=op.media_info.season,
+                parsed_episode=op.media_info.episode,
+                resolution=op.media_info.quality.resolution,
+                quality_score=op.media_info.quality.quality_score(),
+            )
+
+            dest_path = str(op.destination)
+            if op.omdb_movie:
+                self.db.save_movie_match(
+                    media_file_id=media_file_id,
+                    imdb_id=op.omdb_movie.imdb_id,
+                    title=op.omdb_movie.title,
+                    year=op.omdb_movie.year,
+                    plot=op.omdb_movie.plot,
+                    poster=op.omdb_movie.poster,
+                    destination_path=dest_path,
+                    lookup_title=op.media_info.title or "",
+                    lookup_year=op.media_info.year,
+                )
+            elif op.tvmaze_show:
+                self.db.save_episode_match(
+                    media_file_id=media_file_id,
+                    show_id=op.tvmaze_show.tvmaze_id,
+                    show_name=op.tvmaze_show.name,
+                    premiered=op.tvmaze_show.premiered,
+                    show_poster=op.tvmaze_show.poster,
+                    show_summary=op.tvmaze_show.summary,
+                    episode_id=op.tvmaze_episode.episode_id if op.tvmaze_episode else None,
+                    episode_name=op.tvmaze_episode.name if op.tvmaze_episode else None,
+                    airdate=op.tvmaze_episode.airdate if op.tvmaze_episode else None,
+                    episode_summary=op.tvmaze_episode.summary if op.tvmaze_episode else None,
+                    season=op.tvmaze_episode.season_number if op.tvmaze_episode else None,
+                    episode_number=op.tvmaze_episode.episode_number if op.tvmaze_episode else None,
+                    destination_path=dest_path,
+                    lookup_title=op.media_info.show_name or "",
+                    lookup_year=op.media_info.year,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to cache to DB: {file_path.name}: {e}")
+
     async def startup(self) -> None:
         """Initialize API clients."""
         self._omdb_client = OMDbClient(self.config.omdb.api_key)
@@ -213,6 +429,8 @@ class RenamarrWeb:
             await self._omdb_client.__aexit__(None, None, None)
         if self._tvmaze_client:
             await self._tvmaze_client.__aexit__(None, None, None)
+        if self.db:
+            self.db.close()
 
     async def run_scan(self, media_type: str = "all") -> None:
         """Run a scan in the background.
@@ -248,6 +466,14 @@ class RenamarrWeb:
             all_files: list[FilePreview] = []
             all_duplicates: list[DuplicateGroupPreview] = []
 
+            # Rebuild library index for "already in library" detection
+            output_dirs = []
+            if media_type in ("all", "movies"):
+                output_dirs.append((self.config.directories.movies.output, "movie"))
+            if media_type in ("all", "tv"):
+                output_dirs.append((self.config.directories.tv.output, "episode"))
+            self.db.rebuild_library(output_dirs)
+
             # Carry over data from the type NOT being scanned
             if existing_scan and media_type == "movies":
                 all_files.extend(f for f in existing_scan.files if f.media_type != "movie")
@@ -267,7 +493,7 @@ class RenamarrWeb:
                 movies_dir = self.config.directories.movies.watch
                 if movies_dir.exists():
                     logger.info(f"Scanning movies: {movies_dir}")
-                    ops, dups = await self._renamer.preview_directory(movies_dir, "movie")
+                    ops, dups = await self._scan_directory_cached(movies_dir, "movie")
                     files, dup_previews = self._convert_results(ops, dups)
                     all_files.extend(files)
                     all_duplicates.extend(dup_previews)
@@ -277,7 +503,7 @@ class RenamarrWeb:
                 tv_dir = self.config.directories.tv.watch
                 if tv_dir.exists():
                     logger.info(f"Scanning TV: {tv_dir}")
-                    ops, dups = await self._renamer.preview_directory(tv_dir, "episode")
+                    ops, dups = await self._scan_directory_cached(tv_dir, "episode")
                     files, dup_previews = self._convert_results(ops, dups)
                     all_files.extend(files)
                     all_duplicates.extend(dup_previews)
@@ -329,9 +555,7 @@ class RenamarrWeb:
         files = []
         for op in operations:
             file_id = str(uuid.uuid4())
-            # Check if already correctly named
-            # Compare with multiple levels of normalization because OMDb
-            # titles often differ from folder names on disk (case, punctuation)
+            # Check if already correctly named using multiple methods
             already_correct = False
             try:
                 src_resolved = str(op.source.resolve())
@@ -339,34 +563,35 @@ class RenamarrWeb:
                 if src_resolved == dst_resolved:
                     already_correct = True
                 elif src_resolved.lower() == dst_resolved.lower():
-                    # Case-insensitive: "Space Jam a New Legacy" vs "Space Jam A New Legacy"
                     already_correct = True
-                    logger.debug(f"Case-insensitive match: {op.source.name}")
                 else:
-                    # Normalize: strip punctuation for comparison
-                    # Handles "Alien vs Predator" vs "Alien vs. Predator"
                     import re as _re
                     norm_src = _re.sub(r'[^a-z0-9/\\]', '', src_resolved.lower())
                     norm_dst = _re.sub(r'[^a-z0-9/\\]', '', dst_resolved.lower())
                     if norm_src == norm_dst:
                         already_correct = True
-                        logger.debug(f"Normalized match: {op.source.name}")
-                    else:
-                        logger.debug(
-                            f"Path mismatch: src={src_resolved} dst={dst_resolved}"
-                        )
             except OSError:
                 pass
 
-            # Also check if destination already exists in library
-            # (file was previously moved but a copy remains in watch dir)
+            # Check DB library index (normalized comparison)
             if not already_correct:
-                try:
-                    if op.destination.exists():
-                        already_correct = True
-                        logger.info(f"File already exists in library: {op.destination}")
-                except OSError:
-                    pass
+                if self.db.is_in_library(str(op.destination)):
+                    already_correct = True
+                    logger.debug(f"Already in library (DB): {op.destination.name}")
+
+            # Restore persisted decision from DB
+            decision = self.db.get_decision(str(op.source))
+            if not decision and op.media_info.quality.file_size:
+                decision = self.db.find_decision(
+                    op.source.name, op.media_info.quality.file_size
+                )
+            restored_status = None
+            if decision:
+                ds = decision["status"]
+                if ds == "ignored":
+                    restored_status = "ignored"
+                elif ds == "completed":
+                    already_correct = True
 
             title = ""
             year = None
@@ -401,7 +626,7 @@ class RenamarrWeb:
                 resolution=op.media_info.quality.resolution,
                 quality_score=op.media_info.quality.quality_score(),
                 file_size=op.media_info.quality.file_size,
-                status="correct" if already_correct else "pending",
+                status=restored_status or ("correct" if already_correct else "pending"),
                 already_correct=already_correct,
             )
             files.append(preview)
@@ -470,6 +695,15 @@ class RenamarrWeb:
                         "destination": file.destination_filename,
                         "media_type": file.media_type,
                     })
+                    # Mark as completed in DB so it never reappears
+                    self.db.save_decision(
+                        file_path=file.source_path,
+                        file_size=file.file_size,
+                        filename=file.source_filename,
+                        media_type=file.media_type,
+                        status="completed",
+                        chosen_destination=file.destination_path,
+                    )
                 else:
                     file.status = "failed"
                     file.error = result.error
@@ -628,6 +862,20 @@ class RenamarrWeb:
 
             self.store.save_scan(scan)
             logger.info(f"Updated metadata for '{file_preview.source_filename}': {new_title} ({new_year})")
+
+            # Update DB cache with manual override
+            if op:
+                self._cache_operation_to_db(Path(file_preview.source_path), op)
+                # Mark as manual override in DB
+                media_file = self.db.get_media_file(file_preview.source_path)
+                if media_file:
+                    match = self.db.get_match(media_file["id"])
+                    if match:
+                        self.db._conn.execute(
+                            "UPDATE matches SET is_manual_override=1 WHERE id=?",
+                            (match["id"],),
+                        )
+                        self.db._conn.commit()
         else:
             logger.warning(f"No API result for '{lookup_title}' — metadata unchanged")
 
@@ -1102,28 +1350,53 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    def _persist_decision(file_id: str, status: str) -> None:
+        """Save a user decision to the DB for the given file."""
+        scan = web.store.load_scan()
+        if not scan:
+            return
+        fp = next((f for f in scan.files if f.id == file_id), None)
+        if fp:
+            web.db.save_decision(
+                file_path=fp.source_path,
+                file_size=fp.file_size,
+                filename=fp.source_filename,
+                media_type=fp.media_type,
+                status=status,
+                chosen_destination=fp.destination_path,
+            )
+
     @app.post("/api/files/{file_id}/approve", dependencies=[Depends(_verify_api_key)])
     async def approve_file(file_id: str):
         if not web.store.update_file_status(file_id, "approved"):
             raise HTTPException(404, "File not found")
+        _persist_decision(file_id, "approved")
         return {"status": "approved"}
 
     @app.post("/api/files/{file_id}/reject", dependencies=[Depends(_verify_api_key)])
     async def reject_file(file_id: str):
         if not web.store.update_file_status(file_id, "rejected"):
             raise HTTPException(404, "File not found")
+        _persist_decision(file_id, "rejected")
         return {"status": "rejected"}
 
     @app.post("/api/files/{file_id}/pending", dependencies=[Depends(_verify_api_key)])
     async def reset_file(file_id: str):
         if not web.store.update_file_status(file_id, "pending"):
             raise HTTPException(404, "File not found")
+        # Remove decision from DB when resetting to pending
+        scan = web.store.load_scan()
+        if scan:
+            fp = next((f for f in scan.files if f.id == file_id), None)
+            if fp:
+                web.db.remove_decision(fp.source_path)
         return {"status": "pending"}
 
     @app.post("/api/files/{file_id}/ignore", dependencies=[Depends(_verify_api_key)])
     async def ignore_file(file_id: str):
         if not web.store.update_file_status(file_id, "ignored"):
             raise HTTPException(404, "File not found")
+        _persist_decision(file_id, "ignored")
         return {"status": "ignored"}
 
     @app.post("/api/files/{file_id}/retry", dependencies=[Depends(_verify_api_key)])
