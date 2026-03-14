@@ -413,7 +413,7 @@ function renderDuplicates(duplicates) {
                 html += '<span class="dup-best-tag">BEST</span>';
             }
             html += '<span class="dup-actions">';
-            if (f.status === 'pending') {
+            if (f.status === 'pending' || f.status === 'correct' || f.status === 'ignored') {
                 html += '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + f.id + '\')">Keep</button> ';
                 html += '<button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + f.id + '\')">Reject</button>';
             } else if (f.status === 'approved') {
