@@ -382,19 +382,23 @@ class RenamarrDB:
 
     # --- Library inventory ---
 
-    def rebuild_library(self, output_dirs: list[tuple[Path, str]]) -> int:
+    def rebuild_library(
+        self, output_dirs: list[tuple[Path, str]]
+    ) -> tuple[int, dict[str, list[Path]]]:
         """Scan output directories and rebuild the library table.
 
         Args:
             output_dirs: list of (directory_path, media_type) tuples.
 
         Returns:
-            Number of files indexed.
+            Tuple of (files indexed, dict mapping directory str -> list of video Paths).
+            The dict can be reused by callers to avoid re-walking the same dirs.
         """
         from .utils import is_video_file
 
         now = datetime.now().isoformat()
         count = 0
+        discovered: dict[str, list[Path]] = {}
 
         # Clear stale entries
         self._conn.execute("DELETE FROM library")
@@ -402,9 +406,12 @@ class RenamarrDB:
         for directory, media_type in output_dirs:
             if not directory.exists():
                 continue
+            dir_key = str(directory)
+            dir_files: list[Path] = []
             for f in directory.rglob("*"):
                 if not is_video_file(f):
                     continue
+                dir_files.append(f)
                 try:
                     stat = f.stat()
                     path_str = str(f)
@@ -419,10 +426,11 @@ class RenamarrDB:
                     count += 1
                 except OSError:
                     continue
+            discovered[dir_key] = dir_files
 
         self._conn.commit()
         logger.info(f"Library index rebuilt: {count} files")
-        return count
+        return count, discovered
 
     def is_in_library(self, destination_path: str) -> bool:
         """Check if a destination path exists in the library (normalized comparison)."""

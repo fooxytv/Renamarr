@@ -175,13 +175,26 @@ class RenamarrWeb:
             logger.info(f"Loaded {len(serialized)} persisted operations")
 
     async def _scan_directory_cached(
-        self, directory: Path, media_type: str
+        self, directory: Path, media_type: str,
+        pre_discovered: list[Path] | None = None,
     ) -> tuple[list[RenameOperation], list]:
-        """Scan a directory using DB cache to skip API calls for unchanged files."""
+        """Scan a directory using DB cache to skip API calls for unchanged files.
+
+        Args:
+            directory: Directory to scan.
+            media_type: "movie" or "episode".
+            pre_discovered: Optional pre-walked list of video files (avoids
+                            re-walking the directory if already done by
+                            rebuild_library).
+        """
         from ..parser import parse_media_file
 
-        video_files = [f for f in directory.rglob("*") if is_video_file(f)]
-        logger.info(f"Found {len(video_files)} video files in {directory}")
+        if pre_discovered is not None:
+            video_files = pre_discovered
+            logger.info(f"Reusing {len(video_files)} pre-discovered files from {directory}")
+        else:
+            video_files = [f for f in directory.rglob("*") if is_video_file(f)]
+            logger.info(f"Found {len(video_files)} video files in {directory}")
 
         operations: list[RenameOperation] = []
         uncached_files: list[Path] = []
@@ -529,12 +542,13 @@ class RenamarrWeb:
             all_duplicates: list[DuplicateGroupPreview] = []
 
             # Rebuild library index for "already in library" detection
+            # Also returns discovered files so we can skip re-walking the same dirs
             output_dirs = []
             if media_type in ("all", "movies"):
                 output_dirs.append((self.config.directories.movies.output, "movie"))
             if media_type in ("all", "tv"):
                 output_dirs.append((self.config.directories.tv.output, "episode"))
-            self.db.rebuild_library(output_dirs)
+            _, discovered_files = self.db.rebuild_library(output_dirs)
 
             # Carry over data from the type NOT being scanned
             if existing_scan and media_type == "movies":
@@ -555,7 +569,9 @@ class RenamarrWeb:
                 movies_dir = self.config.directories.movies.watch
                 if movies_dir.exists():
                     logger.info(f"Scanning movies: {movies_dir}")
-                    ops, dups = await self._scan_directory_cached(movies_dir, "movie")
+                    # Reuse file list if watch == output (avoids double NFS walk)
+                    pre = discovered_files.get(str(movies_dir))
+                    ops, dups = await self._scan_directory_cached(movies_dir, "movie", pre)
                     files, dup_previews = self._convert_results(ops, dups)
                     all_files.extend(files)
                     all_duplicates.extend(dup_previews)
@@ -565,7 +581,8 @@ class RenamarrWeb:
                 tv_dir = self.config.directories.tv.watch
                 if tv_dir.exists():
                     logger.info(f"Scanning TV: {tv_dir}")
-                    ops, dups = await self._scan_directory_cached(tv_dir, "episode")
+                    pre = discovered_files.get(str(tv_dir))
+                    ops, dups = await self._scan_directory_cached(tv_dir, "episode", pre)
                     files, dup_previews = self._convert_results(ops, dups)
                     all_files.extend(files)
                     all_duplicates.extend(dup_previews)
