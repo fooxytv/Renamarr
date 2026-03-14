@@ -1,5 +1,6 @@
 """Discord webhook notifications."""
 
+import asyncio
 import logging
 import os
 
@@ -49,6 +50,17 @@ class DiscordNotifier:
                     logger.warning(f"Discord webhook returned {response.status_code}")
         except Exception as e:
             logger.error(f"Failed to send Discord notification: {e}")
+
+    def _strip_html(self, text: str | None) -> str:
+        """Strip HTML tags from API summaries."""
+        if not text:
+            return ""
+        import re
+        clean = re.sub(r'<[^>]+>', '', text)
+        # Truncate long descriptions
+        if len(clean) > 200:
+            clean = clean[:197] + "..."
+        return clean
 
     async def scan_completed(
         self,
@@ -102,58 +114,73 @@ class DiscordNotifier:
         renames: list[dict] | None = None,
         moved_to_trash: int = 0,
     ) -> None:
-        """Notify that renames have been executed.
+        """Notify that renames have been executed — one embed per file.
 
-        renames: list of {"source": str, "destination": str, "media_type": str}
+        renames: list of {"source": str, "destination": str, "media_type": str,
+                          "title": str, "year": int|None, "poster": str|None,
+                          "plot": str|None, "confidence": int}
         """
         if renamed == 0 and failed == 0 and moved_to_trash == 0:
             return
 
-        color = 3066993 if failed == 0 else 15158332  # Green or Red
-        embed = {
-            "title": "Renames Executed",
-            "color": color,
-            "fields": [
-                {"name": "Renamed", "value": str(renamed), "inline": True},
-                {"name": "Failed", "value": str(failed), "inline": True},
-            ],
-        }
-
-        if moved_to_trash > 0:
-            embed["fields"].append({"name": "Moved to Trash", "value": str(moved_to_trash), "inline": True})
-
-        # Build before → after code blocks grouped by type
+        # Send individual notifications for each rename
         if renames:
-            movie_renames = [r for r in renames if r["media_type"] == "movie"]
-            tv_renames = [r for r in renames if r["media_type"] != "movie"]
+            for r in renames:
+                embed = {
+                    "title": r.get("title") or r["destination"],
+                    "color": 3066993,  # Green
+                    "fields": [
+                        {"name": "Renamed", "value": f"`{r['source']}`\n→ `{r['destination']}`"},
+                    ],
+                }
 
-            rename_parts = []
+                year = r.get("year")
+                if year:
+                    embed["title"] += f" ({year})"
 
-            if movie_renames:
-                lines = []
-                for r in movie_renames[:10]:
-                    lines.append(f"{r['source']} → {r['destination']}")
-                if len(movie_renames) > 10:
-                    lines.append(f"...and {len(movie_renames) - 10} more")
-                rename_parts.append({"name": "Movies", "value": f"```\n" + "\n".join(lines) + "\n```"})
+                plot = self._strip_html(r.get("plot"))
+                if plot:
+                    embed["description"] = plot
 
-            if tv_renames:
-                lines = []
-                for r in tv_renames[:10]:
-                    lines.append(f"{r['source']} → {r['destination']}")
-                if len(tv_renames) > 10:
-                    lines.append(f"...and {len(tv_renames) - 10} more")
-                rename_parts.append({"name": "TV", "value": f"```\n" + "\n".join(lines) + "\n```"})
+                poster = r.get("poster")
+                if poster:
+                    embed["thumbnail"] = {"url": poster}
 
-            embed["fields"].extend(rename_parts)
+                confidence = r.get("confidence", 0)
+                if confidence > 0:
+                    embed["fields"].append(
+                        {"name": "Confidence", "value": f"{confidence}%", "inline": True}
+                    )
 
-        if errors:
-            error_text = "\n".join(errors[:5])
-            if len(errors) > 5:
-                error_text += f"\n...and {len(errors) - 5} more"
-            embed["fields"].append({"name": "Errors", "value": f"```{error_text}```"})
+                embed["fields"].append(
+                    {"name": "Type", "value": "Movie" if r["media_type"] == "movie" else "TV", "inline": True}
+                )
 
-        await self._send([embed])
+                embed["footer"] = {"text": "Rename completed"}
+
+                await self._send([embed])
+                await asyncio.sleep(0.5)  # Rate limit between messages
+
+        # Summary if there were failures
+        if failed > 0 or moved_to_trash > 0:
+            summary = {
+                "title": "Rename Summary",
+                "color": 15158332 if failed > 0 else 3066993,
+                "fields": [
+                    {"name": "Renamed", "value": str(renamed), "inline": True},
+                    {"name": "Failed", "value": str(failed), "inline": True},
+                ],
+            }
+            if moved_to_trash > 0:
+                summary["fields"].append(
+                    {"name": "Moved to Trash", "value": str(moved_to_trash), "inline": True}
+                )
+            if errors:
+                error_text = "\n".join(errors[:5])
+                if len(errors) > 5:
+                    error_text += f"\n...and {len(errors) - 5} more"
+                summary["fields"].append({"name": "Errors", "value": f"```{error_text}```"})
+            await self._send([summary])
 
     async def library_cleanup_completed(
         self,
@@ -191,70 +218,143 @@ class DiscordNotifier:
         self,
         files: list[dict],
     ) -> None:
-        """Notify about files needing manual review (low confidence).
+        """Notify about files needing manual review — one embed per file.
 
         files: list of {"filename": str, "title": str, "confidence": int,
-                        "file_id": str, "media_type": str}
+                        "file_id": str, "media_type": str, "year": int|None,
+                        "poster": str|None, "plot": str|None,
+                        "destination": str|None}
         """
         if not files:
             return
 
-        embed = {
-            "title": f"Review Needed - {len(files)} File{'s' if len(files) != 1 else ''}",
-            "color": 16750848,  # Orange
-            "description": "These files had low confidence matches and need your review.",
-            "fields": [],
-        }
+        for f in files:
+            embed = {
+                "title": f.get("title") or f["filename"],
+                "color": 16750848,  # Orange
+                "fields": [],
+            }
 
-        for f in files[:10]:
-            value = f"**Match:** {f['title']}\n**Confidence:** {f['confidence']}%"
-            if self.web_url:
-                approve_url = f"{self.web_url}/api/files/{f['file_id']}/approve"
-                reject_url = f"{self.web_url}/api/files/{f['file_id']}/reject"
-                value += f"\n[Approve]({approve_url}) | [Reject]({reject_url}) | [Open UI]({self.web_url})"
+            year = f.get("year")
+            if year:
+                embed["title"] += f" ({year})"
+
+            # Plot/description
+            plot = self._strip_html(f.get("plot"))
+            if plot:
+                embed["description"] = plot
+
+            # Poster thumbnail
+            poster = f.get("poster")
+            if poster:
+                embed["thumbnail"] = {"url": poster}
+
+            # File info
             embed["fields"].append({
-                "name": f['filename'],
-                "value": value,
+                "name": "File",
+                "value": f"`{f['filename']}`",
             })
 
-        if len(files) > 10:
-            remaining = len(files) - 10
-            if self.web_url:
-                embed["footer"] = {"text": f"...and {remaining} more. Open the UI to review all."}
-            else:
-                embed["footer"] = {"text": f"...and {remaining} more."}
+            destination = f.get("destination")
+            if destination:
+                embed["fields"].append({
+                    "name": "Would rename to",
+                    "value": f"`{destination}`",
+                })
 
-        await self._send([embed])
+            embed["fields"].append({
+                "name": "Confidence",
+                "value": f"**{f['confidence']}%**",
+                "inline": True,
+            })
+            embed["fields"].append({
+                "name": "Type",
+                "value": "Movie" if f["media_type"] == "movie" else "TV",
+                "inline": True,
+            })
+
+            # Action links
+            if self.web_url:
+                file_id = f.get("file_id", "")
+                links = (
+                    f"[Approve]({self.web_url}/api/files/{file_id}/approve) | "
+                    f"[Reject]({self.web_url}/api/files/{file_id}/reject) | "
+                    f"[Open Renamarr]({self.web_url})"
+                )
+                embed["fields"].append({"name": "Actions", "value": links})
+
+            embed["footer"] = {"text": "Review needed — low confidence match"}
+
+            await self._send([embed])
+            await asyncio.sleep(0.5)  # Rate limit between messages
 
     async def auto_approved(
         self,
         count: int,
         files: list[dict] | None = None,
     ) -> None:
-        """Notify about files that were auto-approved due to high confidence.
+        """Notify about files that were auto-approved — one embed per file.
 
-        files: list of {"filename": str, "title": str, "confidence": int}
+        files: list of {"filename": str, "title": str, "confidence": int,
+                        "year": int|None, "poster": str|None, "plot": str|None,
+                        "destination": str|None, "media_type": str}
         """
         if count == 0:
             return
 
-        embed = {
-            "title": f"Auto-Approved - {count} File{'s' if count != 1 else ''}",
-            "color": 3066993,  # Green
-        }
-
         if files:
-            lines = []
-            for f in files[:10]:
-                lines.append(f"{f['filename']} -> {f['title']} ({f['confidence']}%)")
-            if count > 10:
-                lines.append(f"...and {count - 10} more")
-            embed["description"] = "```\n" + "\n".join(lines) + "\n```"
+            for f in files:
+                embed = {
+                    "title": f.get("title") or f["filename"],
+                    "color": 3066993,  # Green
+                    "fields": [],
+                }
 
-        if self.web_url:
-            embed["footer"] = {"text": f"Review in UI: {self.web_url}"}
+                year = f.get("year")
+                if year:
+                    embed["title"] += f" ({year})"
 
-        await self._send([embed])
+                plot = self._strip_html(f.get("plot"))
+                if plot:
+                    embed["description"] = plot
+
+                poster = f.get("poster")
+                if poster:
+                    embed["thumbnail"] = {"url": poster}
+
+                embed["fields"].append({
+                    "name": "File",
+                    "value": f"`{f['filename']}`",
+                })
+
+                destination = f.get("destination")
+                if destination:
+                    embed["fields"].append({
+                        "name": "Will rename to",
+                        "value": f"`{destination}`",
+                    })
+
+                embed["fields"].append({
+                    "name": "Confidence",
+                    "value": f"**{f['confidence']}%**",
+                    "inline": True,
+                })
+                embed["fields"].append({
+                    "name": "Type",
+                    "value": "Movie" if f.get("media_type") == "movie" else "TV",
+                    "inline": True,
+                })
+
+                if self.web_url:
+                    embed["fields"].append({
+                        "name": "Review",
+                        "value": f"[Open Renamarr]({self.web_url})",
+                    })
+
+                embed["footer"] = {"text": "Auto-approved — high confidence match"}
+
+                await self._send([embed])
+                await asyncio.sleep(0.5)
 
     async def scan_failed(self, error: str) -> None:
         """Notify that a scan failed."""

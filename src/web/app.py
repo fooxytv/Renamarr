@@ -575,39 +575,50 @@ class RenamarrWeb:
             auto_approved_files = []
             review_files = []
 
-            if threshold > 0:
-                for f in all_files:
-                    if f.status != "pending":
-                        continue
-                    if f.confidence >= threshold:
-                        f.status = "approved"
-                        auto_approved_files.append({
-                            "filename": f.source_filename,
-                            "title": f.title,
-                            "confidence": f.confidence,
-                        })
-                        self.db.save_decision(
-                            file_path=f.source_path,
-                            file_size=f.file_size,
-                            filename=f.source_filename,
-                            media_type=f.media_type,
-                            status="approved",
-                            chosen_destination=f.destination_path,
-                        )
-                    elif f.confidence > 0:
-                        review_files.append({
-                            "filename": f.source_filename,
-                            "title": f.title,
-                            "confidence": f.confidence,
-                            "file_id": f.id,
-                            "media_type": f.media_type,
-                        })
+            for f in all_files:
+                if f.status != "pending":
+                    continue
 
-                if auto_approved_files:
-                    logger.info(
-                        f"Auto-approved {len(auto_approved_files)} files "
-                        f"(confidence >= {threshold}%)"
+                # Build rich notification data from the operation
+                op = self._operations.get(f.id)
+                plot = ""
+                if op:
+                    if op.omdb_movie:
+                        plot = op.omdb_movie.plot or ""
+                    elif op.tvmaze_show:
+                        plot = op.tvmaze_show.summary or ""
+
+                file_info = {
+                    "filename": f.source_filename,
+                    "title": f.title,
+                    "year": f.year,
+                    "confidence": f.confidence,
+                    "file_id": f.id,
+                    "media_type": f.media_type,
+                    "poster": f.poster_url,
+                    "plot": plot,
+                    "destination": f.destination_filename,
+                }
+
+                if threshold > 0 and f.confidence >= threshold:
+                    f.status = "approved"
+                    auto_approved_files.append(file_info)
+                    self.db.save_decision(
+                        file_path=f.source_path,
+                        file_size=f.file_size,
+                        filename=f.source_filename,
+                        media_type=f.media_type,
+                        status="approved",
+                        chosen_destination=f.destination_path,
                     )
+                elif f.confidence > 0:
+                    review_files.append(file_info)
+
+            if auto_approved_files:
+                logger.info(
+                    f"Auto-approved {len(auto_approved_files)} files "
+                    f"(confidence >= {threshold}%)"
+                )
 
             scan.files = all_files
             scan.duplicates = all_duplicates
@@ -805,10 +816,21 @@ class RenamarrWeb:
                 if result.success:
                     file.status = "completed"
                     results["completed"] += 1
+                    plot = ""
+                    poster = file.poster_url
+                    if op.omdb_movie:
+                        plot = op.omdb_movie.plot or ""
+                    elif op.tvmaze_show:
+                        plot = op.tvmaze_show.summary or ""
                     renames.append({
                         "source": file.source_filename,
                         "destination": file.destination_filename,
                         "media_type": file.media_type,
+                        "title": file.title,
+                        "year": file.year,
+                        "poster": poster,
+                        "plot": plot,
+                        "confidence": file.confidence,
                     })
                     # Mark as completed in DB so it never reappears
                     self.db.save_decision(
