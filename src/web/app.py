@@ -437,6 +437,9 @@ class RenamarrWeb:
             duplicate_handler=duplicate_handler,
         )
 
+        # Start Discord notification queue worker
+        self._notifier.start()
+
         # Start scheduled scan if enabled
         if self.config.options.scheduled_scan and self.config.options.scan_interval > 0:
             self._scheduler_task = asyncio.create_task(self._scan_scheduler())
@@ -468,6 +471,9 @@ class RenamarrWeb:
                     await self._scan_task
                 except asyncio.CancelledError:
                     pass
+
+        # Drain Discord notification queue
+        await self._notifier.stop()
 
         if self._omdb_client:
             await self._omdb_client.__aexit__(None, None, None)

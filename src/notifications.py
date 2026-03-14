@@ -1,16 +1,24 @@
-"""Discord webhook notifications."""
+"""Discord webhook notifications with built-in rate-limit queue."""
 
 import asyncio
 import logging
 import os
+import time
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
+# Max individual rich embeds before switching to a summary
+MAX_INDIVIDUAL_EMBEDS = 10
+
+# Discord allows ~30 requests/minute per webhook. We stay under at 25/min.
+DISCORD_RATE_LIMIT = 25
+DISCORD_RATE_WINDOW = 60.0
+
 
 class DiscordNotifier:
-    """Sends notifications to Discord via webhook."""
+    """Sends notifications to Discord via webhook with rate-limit queue."""
 
     ALLOWED_WEBHOOK_PREFIXES = (
         "https://discord.com/api/webhooks/",
@@ -31,10 +39,61 @@ class DiscordNotifier:
         if not self._enabled:
             logger.info("Discord notifications disabled (no webhook URL configured)")
 
-    async def _send(self, embeds: list[dict]) -> None:
-        """Send a message to Discord."""
+        # Rate limiting: track send timestamps
+        self._send_times: list[float] = []
+        # Async queue for outbound messages
+        self._queue: asyncio.Queue[list[dict]] = asyncio.Queue()
+        self._worker_task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        """Start the background queue worker. Call from an async context."""
+        if self._enabled and self._worker_task is None:
+            self._worker_task = asyncio.create_task(self._queue_worker())
+            logger.debug("Discord notification queue worker started")
+
+    async def stop(self) -> None:
+        """Drain the queue and stop the worker."""
+        if self._worker_task:
+            # Signal worker to stop
+            await self._queue.put(None)  # type: ignore[arg-type]
+            try:
+                await asyncio.wait_for(self._worker_task, timeout=30)
+            except asyncio.TimeoutError:
+                self._worker_task.cancel()
+            self._worker_task = None
+
+    async def _queue_worker(self) -> None:
+        """Background worker that drains the queue respecting rate limits."""
+        while True:
+            embeds = await self._queue.get()
+            if embeds is None:
+                # Drain remaining items before stopping
+                while not self._queue.empty():
+                    remaining = self._queue.get_nowait()
+                    if remaining is not None:
+                        await self._send_now(remaining)
+                break
+            await self._send_now(embeds)
+            self._queue.task_done()
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Wait until we have room in the rate limit window."""
+        now = time.monotonic()
+        # Prune timestamps outside the window
+        self._send_times = [t for t in self._send_times if now - t < DISCORD_RATE_WINDOW]
+        if len(self._send_times) >= DISCORD_RATE_LIMIT:
+            # Wait until the oldest timestamp falls out of the window
+            wait = DISCORD_RATE_WINDOW - (now - self._send_times[0]) + 0.5
+            logger.debug(f"Discord rate limit: waiting {wait:.1f}s")
+            await asyncio.sleep(wait)
+            self._send_times = [t for t in self._send_times if time.monotonic() - t < DISCORD_RATE_WINDOW]
+
+    async def _send_now(self, embeds: list[dict]) -> None:
+        """Send embeds immediately, respecting rate limits and retrying on 429."""
         if not self._enabled:
             return
+
+        await self._wait_for_rate_limit()
 
         payload = {
             "username": "Renamarr",
@@ -43,13 +102,30 @@ class DiscordNotifier:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(self.webhook_url, json=payload)
-                if response.status_code == 204:
-                    logger.debug("Discord notification sent")
-                else:
+                for attempt in range(3):
+                    response = await client.post(self.webhook_url, json=payload)
+                    self._send_times.append(time.monotonic())
+                    if response.status_code == 204:
+                        logger.debug("Discord notification sent")
+                        return
+                    if response.status_code == 429:
+                        retry_after = float(response.json().get("retry_after", 2))
+                        logger.warning(f"Discord rate limited, retrying in {retry_after}s")
+                        await asyncio.sleep(retry_after)
+                        continue
                     logger.warning(f"Discord webhook returned {response.status_code}")
+                    return
         except Exception as e:
             logger.error(f"Failed to send Discord notification: {e}")
+
+    async def _send(self, embeds: list[dict]) -> None:
+        """Queue embeds for sending. Falls back to direct send if worker not running."""
+        if not self._enabled:
+            return
+        if self._worker_task and not self._worker_task.done():
+            await self._queue.put(embeds)
+        else:
+            await self._send_now(embeds)
 
     def _strip_html(self, text: str | None) -> str:
         """Strip HTML tags from API summaries."""
@@ -57,10 +133,111 @@ class DiscordNotifier:
             return ""
         import re
         clean = re.sub(r'<[^>]+>', '', text)
-        # Truncate long descriptions
         if len(clean) > 200:
             clean = clean[:197] + "..."
         return clean
+
+    def _build_file_embed(
+        self, f: dict, color: int, footer_text: str, show_actions: bool = False
+    ) -> dict:
+        """Build a rich embed for a single file."""
+        embed = {
+            "title": f.get("title") or f.get("filename", "Unknown"),
+            "color": color,
+            "fields": [],
+        }
+
+        year = f.get("year")
+        if year:
+            embed["title"] += f" ({year})"
+
+        plot = self._strip_html(f.get("plot"))
+        if plot:
+            embed["description"] = plot
+
+        poster = f.get("poster")
+        if poster:
+            embed["thumbnail"] = {"url": poster}
+
+        embed["fields"].append({
+            "name": "File",
+            "value": f"`{f.get('filename', '')}`",
+        })
+
+        destination = f.get("destination")
+        if destination:
+            label = "Renamed" if "completed" in footer_text.lower() else "Would rename to"
+            embed["fields"].append({
+                "name": label,
+                "value": f"`{destination}`",
+            })
+
+        confidence = f.get("confidence", 0)
+        if confidence > 0:
+            embed["fields"].append({
+                "name": "Confidence",
+                "value": f"**{confidence}%**",
+                "inline": True,
+            })
+
+        embed["fields"].append({
+            "name": "Type",
+            "value": "Movie" if f.get("media_type") == "movie" else "TV",
+            "inline": True,
+        })
+
+        if show_actions and self.web_url:
+            file_id = f.get("file_id", "")
+            links = (
+                f"[Approve]({self.web_url}/api/files/{file_id}/approve) | "
+                f"[Reject]({self.web_url}/api/files/{file_id}/reject) | "
+                f"[Open Renamarr]({self.web_url})"
+            )
+            embed["fields"].append({"name": "Actions", "value": links})
+        elif self.web_url:
+            embed["fields"].append({
+                "name": "Review",
+                "value": f"[Open Renamarr]({self.web_url})",
+            })
+
+        embed["footer"] = {"text": footer_text}
+        return embed
+
+    async def _send_file_notifications(
+        self, files: list[dict], color: int, footer_text: str,
+        summary_title: str, show_actions: bool = False,
+    ) -> None:
+        """Send individual embeds for the first N files, then a summary for the rest."""
+        if not files:
+            return
+
+        # Send individual rich embeds for the first batch
+        for f in files[:MAX_INDIVIDUAL_EMBEDS]:
+            embed = self._build_file_embed(f, color, footer_text, show_actions)
+            await self._send([embed])
+
+        # Summary for the rest
+        remaining = len(files) - MAX_INDIVIDUAL_EMBEDS
+        if remaining > 0:
+            summary = {
+                "title": summary_title,
+                "color": color,
+                "description": f"**+{remaining} more file{'s' if remaining != 1 else ''}** not shown individually.",
+            }
+            if self.web_url:
+                summary["description"] += f"\n[View all in Renamarr]({self.web_url})"
+            lines = []
+            for f in files[MAX_INDIVIDUAL_EMBEDS:MAX_INDIVIDUAL_EMBEDS + 20]:
+                conf = f.get("confidence", 0)
+                title = f.get("title") or f.get("filename", "?")
+                lines.append(f"{f.get('filename', '?')} → {title} ({conf}%)")
+            if remaining > 20:
+                lines.append(f"...and {remaining - 20} more")
+            summary["fields"] = [{
+                "name": "Files",
+                "value": "```\n" + "\n".join(lines) + "\n```",
+            }]
+            await self._send([summary])
 
     async def scan_completed(
         self,
@@ -114,7 +291,7 @@ class DiscordNotifier:
         renames: list[dict] | None = None,
         moved_to_trash: int = 0,
     ) -> None:
-        """Notify that renames have been executed — one embed per file.
+        """Notify that renames have been executed.
 
         renames: list of {"source": str, "destination": str, "media_type": str,
                           "title": str, "year": int|None, "poster": str|None,
@@ -123,45 +300,14 @@ class DiscordNotifier:
         if renamed == 0 and failed == 0 and moved_to_trash == 0:
             return
 
-        # Send individual notifications for each rename
         if renames:
-            for r in renames:
-                embed = {
-                    "title": r.get("title") or r["destination"],
-                    "color": 3066993,  # Green
-                    "fields": [
-                        {"name": "Renamed", "value": f"`{r['source']}`\n→ `{r['destination']}`"},
-                    ],
-                }
+            await self._send_file_notifications(
+                files=renames,
+                color=3066993,  # Green
+                footer_text="Rename completed",
+                summary_title=f"Renames Completed — {len(renames)} files",
+            )
 
-                year = r.get("year")
-                if year:
-                    embed["title"] += f" ({year})"
-
-                plot = self._strip_html(r.get("plot"))
-                if plot:
-                    embed["description"] = plot
-
-                poster = r.get("poster")
-                if poster:
-                    embed["thumbnail"] = {"url": poster}
-
-                confidence = r.get("confidence", 0)
-                if confidence > 0:
-                    embed["fields"].append(
-                        {"name": "Confidence", "value": f"{confidence}%", "inline": True}
-                    )
-
-                embed["fields"].append(
-                    {"name": "Type", "value": "Movie" if r["media_type"] == "movie" else "TV", "inline": True}
-                )
-
-                embed["footer"] = {"text": "Rename completed"}
-
-                await self._send([embed])
-                await asyncio.sleep(0.5)  # Rate limit between messages
-
-        # Summary if there were failures
         if failed > 0 or moved_to_trash > 0:
             summary = {
                 "title": "Rename Summary",
@@ -218,143 +364,37 @@ class DiscordNotifier:
         self,
         files: list[dict],
     ) -> None:
-        """Notify about files needing manual review — one embed per file.
+        """Notify about files needing manual review.
 
-        files: list of {"filename": str, "title": str, "confidence": int,
-                        "file_id": str, "media_type": str, "year": int|None,
-                        "poster": str|None, "plot": str|None,
-                        "destination": str|None}
+        First 10 get individual rich embeds with poster/plot/actions.
+        The rest get a compact summary.
         """
-        if not files:
-            return
-
-        for f in files:
-            embed = {
-                "title": f.get("title") or f["filename"],
-                "color": 16750848,  # Orange
-                "fields": [],
-            }
-
-            year = f.get("year")
-            if year:
-                embed["title"] += f" ({year})"
-
-            # Plot/description
-            plot = self._strip_html(f.get("plot"))
-            if plot:
-                embed["description"] = plot
-
-            # Poster thumbnail
-            poster = f.get("poster")
-            if poster:
-                embed["thumbnail"] = {"url": poster}
-
-            # File info
-            embed["fields"].append({
-                "name": "File",
-                "value": f"`{f['filename']}`",
-            })
-
-            destination = f.get("destination")
-            if destination:
-                embed["fields"].append({
-                    "name": "Would rename to",
-                    "value": f"`{destination}`",
-                })
-
-            embed["fields"].append({
-                "name": "Confidence",
-                "value": f"**{f['confidence']}%**",
-                "inline": True,
-            })
-            embed["fields"].append({
-                "name": "Type",
-                "value": "Movie" if f["media_type"] == "movie" else "TV",
-                "inline": True,
-            })
-
-            # Action links
-            if self.web_url:
-                file_id = f.get("file_id", "")
-                links = (
-                    f"[Approve]({self.web_url}/api/files/{file_id}/approve) | "
-                    f"[Reject]({self.web_url}/api/files/{file_id}/reject) | "
-                    f"[Open Renamarr]({self.web_url})"
-                )
-                embed["fields"].append({"name": "Actions", "value": links})
-
-            embed["footer"] = {"text": "Review needed — low confidence match"}
-
-            await self._send([embed])
-            await asyncio.sleep(0.5)  # Rate limit between messages
+        await self._send_file_notifications(
+            files=files,
+            color=16750848,  # Orange
+            footer_text="Review needed — low confidence match",
+            summary_title=f"Review Needed — {len(files)} files",
+            show_actions=True,
+        )
 
     async def auto_approved(
         self,
         count: int,
         files: list[dict] | None = None,
     ) -> None:
-        """Notify about files that were auto-approved — one embed per file.
+        """Notify about files that were auto-approved.
 
-        files: list of {"filename": str, "title": str, "confidence": int,
-                        "year": int|None, "poster": str|None, "plot": str|None,
-                        "destination": str|None, "media_type": str}
+        First 10 get individual rich embeds. The rest get a compact summary.
         """
         if count == 0:
             return
 
-        if files:
-            for f in files:
-                embed = {
-                    "title": f.get("title") or f["filename"],
-                    "color": 3066993,  # Green
-                    "fields": [],
-                }
-
-                year = f.get("year")
-                if year:
-                    embed["title"] += f" ({year})"
-
-                plot = self._strip_html(f.get("plot"))
-                if plot:
-                    embed["description"] = plot
-
-                poster = f.get("poster")
-                if poster:
-                    embed["thumbnail"] = {"url": poster}
-
-                embed["fields"].append({
-                    "name": "File",
-                    "value": f"`{f['filename']}`",
-                })
-
-                destination = f.get("destination")
-                if destination:
-                    embed["fields"].append({
-                        "name": "Will rename to",
-                        "value": f"`{destination}`",
-                    })
-
-                embed["fields"].append({
-                    "name": "Confidence",
-                    "value": f"**{f['confidence']}%**",
-                    "inline": True,
-                })
-                embed["fields"].append({
-                    "name": "Type",
-                    "value": "Movie" if f.get("media_type") == "movie" else "TV",
-                    "inline": True,
-                })
-
-                if self.web_url:
-                    embed["fields"].append({
-                        "name": "Review",
-                        "value": f"[Open Renamarr]({self.web_url})",
-                    })
-
-                embed["footer"] = {"text": "Auto-approved — high confidence match"}
-
-                await self._send([embed])
-                await asyncio.sleep(0.5)
+        await self._send_file_notifications(
+            files=files or [],
+            color=3066993,  # Green
+            footer_text="Auto-approved — high confidence match",
+            summary_title=f"Auto-Approved — {count} files",
+        )
 
     async def scan_failed(self, error: str) -> None:
         """Notify that a scan failed."""
