@@ -52,6 +52,21 @@ class ScanStore:
                 return True
         return False
 
+    def update_files_status(self, file_ids: list[str], status: str) -> int:
+        """Update status of multiple files by ID. Returns count updated."""
+        scan = self.load_scan()
+        if not scan:
+            return 0
+        id_set = set(file_ids)
+        count = 0
+        for file in scan.files:
+            if file.id in id_set and file.status not in ("completed", "failed"):
+                file.status = status
+                count += 1
+        if count > 0:
+            self.save_scan(scan)
+        return count
+
     def update_all_pending(self, status: str) -> int:
         """Update all pending files to a new status. Returns count updated."""
         scan = self.load_scan()
@@ -154,6 +169,54 @@ class ScanStore:
         for group in scan.groups:
             if group.id == group_id:
                 group.status = status
+                self.save_library_scan(scan)
+                return True
+        return False
+
+    def swap_merge_group_canonical(self, group_id: str, new_canonical_path: str) -> bool:
+        """Swap which folder is canonical (kept) in a merge group."""
+        scan = self.load_library_scan()
+        if not scan:
+            return False
+        for group in scan.groups:
+            if group.id == group_id:
+                if group.status not in ("pending", "skipped"):
+                    return False
+                # Find the duplicate to promote
+                try:
+                    idx = group.duplicate_paths.index(new_canonical_path)
+                except ValueError:
+                    return False
+                # Swap: old canonical becomes a duplicate, selected duplicate becomes canonical
+                old_canonical_path = group.canonical_path
+                old_canonical_name = group.canonical_name
+                old_canonical_file_count = group.canonical_file_count
+                old_canonical_size = group.canonical_size
+                old_canonical_size_human = group.canonical_size_human
+
+                group.canonical_path = group.duplicate_paths[idx]
+                group.canonical_name = group.duplicate_names[idx]
+                group.duplicate_paths[idx] = old_canonical_path
+                group.duplicate_names[idx] = old_canonical_name
+
+                # Recalculate sizes: new canonical gets the selected dup's share
+                # Since we don't track per-duplicate sizes, swap canonical stats
+                # with aggregate duplicate stats when there's only one duplicate.
+                # For multiple duplicates, we need to recalculate from the stored info.
+                # For simplicity, swap canonical counts with the total dup counts
+                # (works perfectly for 2-folder groups, approximate for 3+).
+                if len(group.duplicate_paths) == 1:
+                    group.canonical_file_count, group.duplicate_file_count = (
+                        group.duplicate_file_count, old_canonical_file_count
+                    )
+                    group.canonical_size, group.duplicate_size = (
+                        group.duplicate_size, old_canonical_size
+                    )
+                    group.canonical_size_human, group.duplicate_size_human = (
+                        group.duplicate_size_human, old_canonical_size_human
+                    )
+
+                group.status = "pending"
                 self.save_library_scan(scan)
                 return True
         return False

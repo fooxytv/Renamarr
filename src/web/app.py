@@ -127,6 +127,8 @@ class RenamarrWeb:
         self._tvmaze_client: TVMazeClient | None = None
         self._renamer: RenamerService | None = None
         self._notifier = DiscordNotifier()
+        self._discord_bot = None  # DiscordReactionBot | None
+        self._discord_bot_task: asyncio.Task | None = None
         # Cache operations between preview and execute (in-memory + persisted)
         self._operations: dict[str, RenameOperation] = {}
         # Scheduled scan state
@@ -437,6 +439,10 @@ class RenamarrWeb:
             duplicate_handler=duplicate_handler,
         )
 
+        # Start Discord bot if configured
+        if self.config.discord.bot_token and self.config.discord.channel_id:
+            await self._start_discord_bot()
+
         # Start Discord notification queue worker
         self._notifier.start()
 
@@ -446,6 +452,47 @@ class RenamarrWeb:
             logger.info(
                 f"Scheduled scans enabled: every {self.config.options.scan_interval}s"
             )
+
+    async def _start_discord_bot(self) -> None:
+        """Start the Discord reaction bot."""
+        from ..discord_bot import DiscordReactionBot
+
+        async def action_callback(file_id: str, status: str) -> bool:
+            """Handle a reaction-based decision from Discord."""
+            if not self.store.update_file_status(file_id, status):
+                return False
+            # Persist the decision to the database
+            scan = self.store.load_scan()
+            if scan:
+                fp = next((f for f in scan.files if f.id == file_id), None)
+                if fp:
+                    self.db.save_decision(
+                        file_path=fp.source_path,
+                        file_size=fp.file_size,
+                        filename=fp.source_filename,
+                        media_type=fp.media_type,
+                        status=status,
+                        chosen_destination=fp.destination_path,
+                    )
+            return True
+
+        bot = DiscordReactionBot(
+            channel_id=self.config.discord.channel_id,
+            action_callback=action_callback,
+        )
+        self._discord_bot = bot
+        self._notifier.set_bot(bot)
+
+        # Start bot in background (non-blocking)
+        self._discord_bot_task = asyncio.create_task(
+            bot.start(self.config.discord.bot_token)
+        )
+        # Wait for the bot to connect before continuing
+        connected = await bot.wait_until_ready_with_timeout(timeout=30.0)
+        if connected:
+            logger.info("Discord reaction bot started successfully")
+        else:
+            logger.warning("Discord reaction bot failed to connect — reactions won't work")
 
     async def shutdown(self) -> None:
         """Clean up API clients. Waits for any running scan to finish first."""
@@ -474,6 +521,16 @@ class RenamarrWeb:
 
         # Drain Discord notification queue
         await self._notifier.stop()
+
+        # Stop Discord bot
+        if self._discord_bot:
+            await self._discord_bot.close()
+            if self._discord_bot_task and not self._discord_bot_task.done():
+                self._discord_bot_task.cancel()
+                try:
+                    await self._discord_bot_task
+                except asyncio.CancelledError:
+                    pass
 
         if self._omdb_client:
             await self._omdb_client.__aexit__(None, None, None)
@@ -1606,6 +1663,16 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             raise HTTPException(404, "File not found")
         return result
 
+    @app.post("/api/files/bulk-update", dependencies=[Depends(_verify_api_key)])
+    async def bulk_update_files(request: Request):
+        body = await request.json()
+        file_ids = body.get("file_ids", [])
+        status = body.get("status", "")
+        if not file_ids or status not in ("approved", "rejected", "ignored", "pending"):
+            raise HTTPException(400, "Provide file_ids and a valid status")
+        count = web.store.update_files_status(file_ids, status)
+        return {"updated": count}
+
     @app.post("/api/files/approve-all", dependencies=[Depends(_verify_api_key)])
     async def approve_all():
         count = web.store.update_all_pending("approved")
@@ -1680,6 +1747,16 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
         if not web.store.update_merge_group_status(group_id, "pending"):
             raise HTTPException(404, "Group not found")
         return {"status": "pending"}
+
+    @app.post("/api/library/groups/{group_id}/swap", dependencies=[Depends(_verify_api_key)])
+    async def swap_merge_canonical(group_id: str, request: Request):
+        body = await request.json()
+        new_canonical = body.get("canonical_path", "").strip()
+        if not new_canonical:
+            raise HTTPException(400, "canonical_path is required")
+        if not web.store.swap_merge_group_canonical(group_id, new_canonical):
+            raise HTTPException(404, "Group not found or path not in duplicates")
+        return {"status": "swapped"}
 
     @app.post("/api/library/groups/approve-all", dependencies=[Depends(_verify_api_key)])
     async def approve_all_merge_groups():

@@ -95,6 +95,21 @@ class WebConfig(BaseModel):
     data_dir: Path = Field(default=Path("/app/data"), description="Data directory for scan results")
 
 
+class DiscordConfig(BaseModel):
+    """Discord bot configuration for reaction-based approve/reject/ignore."""
+
+    bot_token: str = Field(default="", description="Discord bot token")
+    channel_id: int = Field(default=0, description="Discord channel ID for notifications")
+
+    @field_validator("bot_token", mode="before")
+    @classmethod
+    def resolve_bot_token(cls, v: str) -> str:
+        if isinstance(v, str) and v.startswith("${"):
+            env_var = v[2:-1]
+            return os.environ.get(env_var, "")
+        return v
+
+
 class Config(BaseModel):
     """Main application configuration."""
 
@@ -104,6 +119,7 @@ class Config(BaseModel):
     duplicates: DuplicatesConfig = Field(default_factory=DuplicatesConfig)
     naming: NamingConfig = Field(default_factory=NamingConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "Config":
@@ -127,6 +143,16 @@ class Config(BaseModel):
             if isinstance(api_key, str) and api_key.startswith("${"):
                 env_var = api_key[2:-1]
                 data["omdb"]["api_key"] = os.environ.get(env_var, "")
+
+        # Resolve Discord bot token from env var
+        env_bot_token = os.environ.get("RENAMARR_DISCORD_BOT_TOKEN")
+        if env_bot_token:
+            data.setdefault("discord", {})["bot_token"] = env_bot_token
+
+        # Resolve Discord channel ID from env var
+        env_channel_id = os.environ.get("RENAMARR_DISCORD_CHANNEL_ID")
+        if env_channel_id:
+            data.setdefault("discord", {})["channel_id"] = int(env_channel_id)
 
         return cls(**data)
 

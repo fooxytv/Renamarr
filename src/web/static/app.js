@@ -8,6 +8,7 @@ let currentSort = localStorage.getItem('renamarr_sort') || 'default';
 let pollInterval = null;
 let apiKey = localStorage.getItem('renamarr_api_key') || '';
 let cachedFiles = [];
+let selectedFiles = new Set();
 
 // API helpers
 function getHeaders(extra) {
@@ -209,6 +210,18 @@ function buildToolbar(files, typeFiltered) {
     html += '<button class="btn btn-danger btn-sm" onclick="rejectAll()">Reject All</button>';
     html += '</div>';
 
+    // Selection toolbar (visible when files are selected)
+    html += '<div class="toolbar selection-toolbar" id="selection-toolbar" style="display:' + (selectedFiles.size > 0 ? 'flex' : 'none') + '">';
+    html += '<label class="select-all-label"><input type="checkbox" id="select-all-checkbox" onchange="toggleSelectAll(this.checked)"> Select All</label>';
+    html += '<span class="selection-count" id="selection-count">' + selectedFiles.size + ' selected</span>';
+    html += '<div class="toolbar-spacer"></div>';
+    html += '<button class="btn btn-success btn-sm" onclick="bulkAction(\'approved\')">Approve Selected</button> ';
+    html += '<button class="btn btn-danger btn-sm" onclick="bulkAction(\'rejected\')">Reject Selected</button> ';
+    html += '<button class="btn btn-muted btn-sm" onclick="bulkAction(\'ignored\')">Ignore Selected</button> ';
+    html += '<button class="btn btn-outline btn-sm" onclick="bulkAction(\'pending\')">Reset Selected</button> ';
+    html += '<button class="btn btn-outline btn-sm" onclick="clearSelection()">Clear</button>';
+    html += '</div>';
+
     return html;
 }
 
@@ -217,7 +230,9 @@ function renderCards(filtered) {
     let html = '<div class="card-grid">';
 
     for (const f of filtered) {
-        html += '<div class="media-card">';
+        const isSelected = selectedFiles.has(f.id);
+        html += '<div class="media-card' + (isSelected ? ' card-selected' : '') + '">';
+        html += '<div class="card-select"><input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelect(\'' + f.id + '\', this.checked)" onclick="event.stopPropagation()"></div>';
         html += '<div class="poster-wrapper">';
 
         if (f.poster_url) {
@@ -303,11 +318,14 @@ function renderCards(filtered) {
 // Render file table
 function renderTable(filtered) {
     let html = '<table class="file-table"><thead><tr>';
+    html += '<th class="col-select"><input type="checkbox" onchange="toggleSelectAllVisible(this.checked)"></th>';
     html += '<th>Status</th><th>Type</th><th>Current Name</th><th></th><th>New Name</th><th>Quality</th><th>Conf.</th><th>Size</th><th>Metadata</th><th>Actions</th>';
     html += '</tr></thead><tbody>';
 
     for (const f of filtered) {
-        html += '<tr>';
+        const isSelected = selectedFiles.has(f.id);
+        html += '<tr class="' + (isSelected ? 'row-selected' : '') + '">';
+        html += '<td class="col-select"><input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelect(\'' + f.id + '\', this.checked)"></td>';
         html += '<td><span class="badge badge-' + f.status + '">' + f.status + '</span></td>';
         html += '<td>' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</td>';
         html += '<td class="filename" title="' + esc(f.source_path) + '">' + esc(f.source_filename) + '</td>';
@@ -672,6 +690,79 @@ async function rejectAll() {
     api('POST', '/api/files/reject-all');
 }
 
+function toggleFileSelect(id, checked) {
+    if (checked) {
+        selectedFiles.add(id);
+    } else {
+        selectedFiles.delete(id);
+    }
+    updateSelectionUI();
+    // Update visual state for the card/row containing this checkbox
+    const checkbox = document.querySelector('input[onchange*="' + id + '"]');
+    if (checkbox) {
+        const card = checkbox.closest('.media-card');
+        if (card) card.classList.toggle('card-selected', checked);
+        const row = checkbox.closest('tr');
+        if (row) row.classList.toggle('row-selected', checked);
+    }
+}
+
+function toggleSelectAll(checked) {
+    const visible = getVisibleFileIds();
+    if (checked) {
+        visible.forEach(id => selectedFiles.add(id));
+    } else {
+        visible.forEach(id => selectedFiles.delete(id));
+    }
+    updateSelectionUI();
+    renderFiles(cachedFiles);
+}
+
+function toggleSelectAllVisible(checked) {
+    toggleSelectAll(checked);
+}
+
+function getVisibleFileIds() {
+    let files = cachedFiles;
+    if (currentTypeFilter !== 'all') files = files.filter(f => f.media_type === currentTypeFilter);
+    if (currentFilter !== 'all') files = files.filter(f => f.status === currentFilter);
+    if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        files = files.filter(f =>
+            (f.source_filename && f.source_filename.toLowerCase().includes(q)) ||
+            (f.destination_filename && f.destination_filename.toLowerCase().includes(q)) ||
+            (f.title && f.title.toLowerCase().includes(q))
+        );
+    }
+    return files.map(f => f.id);
+}
+
+function updateSelectionUI() {
+    const toolbar = document.getElementById('selection-toolbar');
+    const countEl = document.getElementById('selection-count');
+    if (toolbar) toolbar.style.display = selectedFiles.size > 0 ? 'flex' : 'none';
+    if (countEl) countEl.textContent = selectedFiles.size + ' selected';
+}
+
+function clearSelection() {
+    selectedFiles.clear();
+    renderFiles(cachedFiles);
+}
+
+async function bulkAction(status) {
+    const ids = Array.from(selectedFiles);
+    if (ids.length === 0) return;
+    // Optimistic UI update
+    for (const f of cachedFiles) {
+        if (selectedFiles.has(f.id) && f.status !== 'completed' && f.status !== 'failed') {
+            f.status = status;
+        }
+    }
+    selectedFiles.clear();
+    renderFiles(cachedFiles);
+    await api('POST', '/api/files/bulk-update', { file_ids: ids, status: status });
+}
+
 async function keepBest(bestId, rejectIds) {
     await api('POST', '/api/files/' + bestId + '/approve');
     for (const id of rejectIds) {
@@ -968,6 +1059,9 @@ function renderLibrary(scan) {
                 html += '<div class="merge-folder merge-duplicate">';
                 html += '<span class="badge badge-rejected">MERGE</span> ';
                 html += '<span class="merge-path" title="' + esc(g.duplicate_paths[i]) + '">' + esc(g.duplicate_paths[i]) + '</span>';
+                if (g.status === 'pending' || g.status === 'skipped') {
+                    html += ' <button class="btn btn-outline btn-sm" onclick="swapMergeCanonical(\'' + g.id + '\', \'' + esc(g.duplicate_paths[i]) + '\')" title="Keep this folder instead">Keep This</button>';
+                }
                 html += '</div>';
             }
 
@@ -1032,6 +1126,11 @@ async function skipLibraryGroup(id) {
 
 async function resetLibraryGroup(id) {
     await api('POST', '/api/library/groups/' + id + '/pending');
+    await loadLibraryScan();
+}
+
+async function swapMergeCanonical(id, duplicatePath) {
+    await api('POST', '/api/library/groups/' + id + '/swap', { canonical_path: duplicatePath });
     await loadLibraryScan();
 }
 

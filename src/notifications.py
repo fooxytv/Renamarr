@@ -15,7 +15,11 @@ DISCORD_RATE_WINDOW = 60.0
 
 
 class DiscordNotifier:
-    """Sends notifications to Discord via webhook with rate-limit queue."""
+    """Sends notifications to Discord via webhook with rate-limit queue.
+
+    When a DiscordReactionBot is attached, review messages are sent via the bot
+    (with reaction emojis) instead of the webhook.
+    """
 
     ALLOWED_WEBHOOK_PREFIXES = (
         "https://discord.com/api/webhooks/",
@@ -41,6 +45,16 @@ class DiscordNotifier:
         # Async queue for outbound messages
         self._queue: asyncio.Queue[list[dict]] = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
+
+        # Optional bot for reaction-based review
+        self._bot = None  # DiscordReactionBot | None
+
+    def set_bot(self, bot) -> None:
+        """Attach a DiscordReactionBot for reaction-based review messages."""
+        self._bot = bot
+        # If we have a bot, notifications are enabled even without a webhook
+        if bot:
+            self._enabled = True
 
     def start(self) -> None:
         """Start the background queue worker. Call from an async context."""
@@ -88,6 +102,13 @@ class DiscordNotifier:
     async def _send_now(self, embeds: list[dict]) -> None:
         """Send embeds immediately, respecting rate limits and retrying on 429."""
         if not self._enabled:
+            return
+
+        # If no webhook URL, try bot channel instead
+        if not self.webhook_url:
+            if self._bot:
+                for embed in embeds:
+                    await self._bot.send_embed(embed)
             return
 
         await self._wait_for_rate_limit()
@@ -339,9 +360,20 @@ class DiscordNotifier:
     ) -> None:
         """Notify about files needing manual review.
 
-        First 10 get individual rich embeds with poster/plot/actions.
-        The rest get a compact summary.
+        When a bot is attached, sends via bot with reaction emojis for
+        approve/reject/ignore. Otherwise falls back to webhook with action links.
         """
+        if self._bot and files:
+            # Send via bot with reaction emojis
+            for f in files:
+                embed = self._build_file_embed(
+                    f, color=16750848, footer_text="React: \u2705 approve | \u274c reject | \U0001f507 ignore",
+                    show_actions=False,
+                )
+                file_id = f.get("file_id", "")
+                await self._bot.send_review_embed(embed, file_id)
+            return
+
         await self._send_file_notifications(
             files=files,
             color=16750848,  # Orange
