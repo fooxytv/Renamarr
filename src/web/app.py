@@ -134,6 +134,11 @@ class RenamarrWeb:
         # Scheduled scan state
         self._scheduler_task: asyncio.Task | None = None
         self._next_scan_at: datetime | None = None
+        # Scan progress tracking
+        self._scan_progress_total: int = 0
+        self._scan_progress_done: int = 0
+        self._scan_progress_cached: int = 0
+        self._scan_progress_current: str = ""
         # Load persisted operations on startup
         self._load_persisted_operations()
 
@@ -236,6 +241,10 @@ class RenamarrWeb:
 
             uncached_files.append(file_path)
 
+        self._scan_progress_cached = len(operations)
+        self._scan_progress_done = len(operations)
+        self._scan_progress_total += len(video_files)
+
         if uncached_files:
             logger.info(
                 f"Cache hit: {len(operations)}, need API lookup: {len(uncached_files)}"
@@ -245,6 +254,7 @@ class RenamarrWeb:
 
         # Do API lookups only for uncached/changed files
         for file_path in uncached_files:
+            self._scan_progress_current = file_path.name
             try:
                 op = await self._renamer.preview_file(file_path)
                 if op:
@@ -252,6 +262,7 @@ class RenamarrWeb:
                     self._cache_operation_to_db(file_path, op)
             except Exception as e:
                 logger.error(f"Error previewing {file_path.name}: {e}")
+            self._scan_progress_done += 1
 
         # Clean up stale DB entries for files no longer on disk
         self.db.remove_stale_files(current_paths)
@@ -588,6 +599,12 @@ class RenamarrWeb:
         Args:
             media_type: "all", "movies", or "tv"
         """
+        # Reset progress tracking
+        self._scan_progress_total = 0
+        self._scan_progress_done = 0
+        self._scan_progress_cached = 0
+        self._scan_progress_current = ""
+
         scan_id = str(uuid.uuid4())
         scan = ScanResult(
             scan_id=scan_id,
@@ -1512,6 +1529,11 @@ def create_app(config: Config, data_dir: Path) -> FastAPI:
             )
             resp.completed = sum(1 for f in scan.files if f.status == "completed")
             resp.failed = sum(1 for f in scan.files if f.status == "failed")
+        if web.scanning:
+            resp.scan_progress_total = web._scan_progress_total
+            resp.scan_progress_done = web._scan_progress_done
+            resp.scan_progress_cached = web._scan_progress_cached
+            resp.scan_progress_current = web._scan_progress_current
         return resp
 
     @app.post("/api/scan", dependencies=[Depends(_verify_api_key)])

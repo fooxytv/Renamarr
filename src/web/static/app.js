@@ -57,6 +57,14 @@ function formatSize(bytes) {
     return size.toFixed(1) + ' ' + units[i];
 }
 
+// Scan progress bar HTML
+function scanProgressHTML() {
+    return '<div id="scan-progress" style="display:none;width:100%;max-width:500px;margin-top:16px">' +
+        '<div class="progress-bar"><div class="progress-bar-fill" style="width:0%"></div></div>' +
+        '<div class="progress-text" style="margin-top:6px;font-size:0.85rem;color:var(--text-dim)"></div>' +
+        '</div>';
+}
+
 // Refresh status bar
 async function refreshStatus() {
     const s = await api('GET', '/api/status');
@@ -113,10 +121,33 @@ async function refreshStatus() {
 
     if (s.scanning) {
         startPolling();
+        updateScanProgress(s);
     } else {
         stopPolling();
     }
     return s;
+}
+
+function updateScanProgress(s) {
+    const el = document.getElementById('scan-progress');
+    if (!el) return;
+    if (!s.scanning || s.scan_progress_total === 0) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = '';
+    const pct = Math.round((s.scan_progress_done / s.scan_progress_total) * 100);
+    const remaining = s.scan_progress_total - s.scan_progress_done;
+    const bar = el.querySelector('.progress-bar-fill');
+    const text = el.querySelector('.progress-text');
+    if (bar) bar.style.width = pct + '%';
+    if (text) {
+        let msg = s.scan_progress_done + ' / ' + s.scan_progress_total + ' files (' + pct + '%)';
+        if (s.scan_progress_cached > 0) msg += ' \u00b7 ' + s.scan_progress_cached + ' cached';
+        if (remaining > 0) msg += ' \u00b7 ' + remaining + ' remaining';
+        if (s.scan_progress_current) msg += ' \u00b7 ' + s.scan_progress_current;
+        text.textContent = msg;
+    }
 }
 
 // Start/stop polling during scan
@@ -147,7 +178,7 @@ async function loadScan() {
 
         const status = await refreshStatus();
         if (scan.status === 'running' && status.scanning) {
-            document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning your media library...</p></div>';
+            document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning your media library...</p>' + scanProgressHTML() + '</div>';
             document.getElementById('tab-duplicates').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning...</p></div>';
             return;
         }
@@ -615,7 +646,7 @@ async function triggerScan(mediaType) {
     btnScan.innerHTML = '<span class="btn-spinner"></span> Scanning...';
     document.getElementById('btn-cancel').style.display = '';
     const label = mediaType === 'movies' ? 'movies' : mediaType === 'tv' ? 'TV shows' : 'media library';
-    document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning ' + label + '...</p></div>';
+    document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning ' + label + '...</p>' + scanProgressHTML() + '</div>';
     document.getElementById('tab-duplicates').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning...</p></div>';
     startPolling();
     const body = mediaType ? { media_type: mediaType } : {};

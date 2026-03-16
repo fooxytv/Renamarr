@@ -114,3 +114,7 @@ class StatusResponse(BaseModel):
     auto_approve_threshold: int = 0
     scheduled_scan: bool = False
     next_scan_at: str | None = None
+    scan_progress_total: int = 0
+    scan_progress_done: int = 0
+    scan_progress_cached: int = 0
+    scan_progress_current: str = ""
