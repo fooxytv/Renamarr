@@ -714,6 +714,7 @@ async function approveAll() {
         if (f.status === 'pending' && !f.already_correct) f.status = 'approved';
     }
     renderFiles(cachedFiles);
+    updateStatusFromCache();
     api('POST', '/api/files/approve-all');
 }
 
@@ -722,6 +723,7 @@ async function rejectAll() {
         if (f.status === 'pending' && !f.already_correct) f.status = 'rejected';
     }
     renderFiles(cachedFiles);
+    updateStatusFromCache();
     api('POST', '/api/files/reject-all');
 }
 
@@ -814,6 +816,7 @@ async function bulkAction(status) {
     }
     selectedFiles.clear();
     renderFiles(cachedFiles);
+    updateStatusFromCache();
     await api('POST', '/api/files/bulk-update', { file_ids: ids, status: status });
 }
 
