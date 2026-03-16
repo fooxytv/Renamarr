@@ -211,14 +211,15 @@ function buildToolbar(files, typeFiltered) {
     html += '</div>';
 
     // Selection toolbar (visible when files are selected)
-    html += '<div class="toolbar selection-toolbar" id="selection-toolbar" style="display:' + (selectedFiles.size > 0 ? 'flex' : 'none') + '">';
+    const selCount = selectedFiles.size;
+    html += '<div class="toolbar selection-toolbar" id="selection-toolbar" style="display:' + (selCount > 0 ? 'flex' : 'none') + '">';
     html += '<label class="select-all-label"><input type="checkbox" id="select-all-checkbox" onchange="toggleSelectAll(this.checked)"> Select All</label>';
-    html += '<span class="selection-count" id="selection-count">' + selectedFiles.size + ' selected</span>';
+    html += '<span class="selection-count" id="selection-count">' + selCount + ' selected</span>';
     html += '<div class="toolbar-spacer"></div>';
-    html += '<button class="btn btn-success btn-sm" onclick="bulkAction(\'approved\')">Approve Selected</button> ';
-    html += '<button class="btn btn-danger btn-sm" onclick="bulkAction(\'rejected\')">Reject Selected</button> ';
-    html += '<button class="btn btn-muted btn-sm" onclick="bulkAction(\'ignored\')">Ignore Selected</button> ';
-    html += '<button class="btn btn-outline btn-sm" onclick="bulkAction(\'pending\')">Reset Selected</button> ';
+    html += '<button class="btn btn-success btn-sm" onclick="bulkAction(\'approved\')">Approve (' + selCount + ')</button> ';
+    html += '<button class="btn btn-danger btn-sm" onclick="bulkAction(\'rejected\')">Reject (' + selCount + ')</button> ';
+    html += '<button class="btn btn-muted btn-sm" onclick="bulkAction(\'ignored\')">Ignore (' + selCount + ')</button> ';
+    html += '<button class="btn btn-outline btn-sm" onclick="bulkAction(\'pending\')">Reset (' + selCount + ')</button> ';
     html += '<button class="btn btn-outline btn-sm" onclick="clearSelection()">Clear</button>';
     html += '</div>';
 
@@ -740,8 +741,14 @@ function getVisibleFileIds() {
 function updateSelectionUI() {
     const toolbar = document.getElementById('selection-toolbar');
     const countEl = document.getElementById('selection-count');
-    if (toolbar) toolbar.style.display = selectedFiles.size > 0 ? 'flex' : 'none';
-    if (countEl) countEl.textContent = selectedFiles.size + ' selected';
+    const n = selectedFiles.size;
+    if (toolbar) toolbar.style.display = n > 0 ? 'flex' : 'none';
+    if (countEl) countEl.textContent = n + ' selected';
+    // Update button counts
+    toolbar?.querySelectorAll('.btn').forEach(btn => {
+        const m = btn.textContent.match(/^(Approve|Reject|Ignore|Reset)\s*\(\d+\)$/);
+        if (m) btn.textContent = m[1] + ' (' + n + ')';
+    });
 }
 
 function clearSelection() {
