@@ -241,6 +241,9 @@ class TVMazeClient:
     ) -> TVShowResult | None:
         """Find the best matching TV show.
 
+        Uses title similarity scoring to pick the best result rather than
+        blindly trusting API ordering. Prefers exact year matches.
+
         Args:
             name: Show name to search for
             year: Optional premiere year to narrow results
@@ -248,18 +251,27 @@ class TVMazeClient:
         Returns:
             Best matching show or None
         """
+        from difflib import SequenceMatcher
+
         results = await self.search_shows(name)
         if not results:
             return None
 
-        # If year provided, prefer matching year
-        if year:
-            for result in results:
-                if result.year == year:
-                    return result
+        query = name.lower().strip()
 
-        # Return first result (most relevant)
-        return results[0]
+        def _score(result: TVShowResult) -> float:
+            sim = SequenceMatcher(None, query, result.name.lower().strip()).ratio()
+            score = sim * 60
+            if year and result.year:
+                if result.year == year:
+                    score += 30
+                elif abs(result.year - year) == 1:
+                    score += 15
+            if query == result.name.lower().strip():
+                score += 10
+            return score
+
+        return max(results, key=_score)
 
     def clear_cache(self) -> None:
         """Clear the response cache."""
