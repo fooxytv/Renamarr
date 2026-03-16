@@ -396,7 +396,7 @@ header .container {
 
 .media-card .card-badge {
     position: absolute;
-    top: 8px;
+    top: 32px;
     left: 8px;
     z-index: 2;
 }

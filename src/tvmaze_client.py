@@ -55,14 +55,15 @@ class TVMazeClient:
     No API key required!
     """
 
-    def __init__(self, requests_per_second: float = 20.0):
+    def __init__(self, requests_per_second: float = 2.0):
         """Initialize the TVMaze client.
 
         Args:
-            requests_per_second: Rate limit (TVMaze allows ~20/10s)
+            requests_per_second: Rate limit (TVMaze allows ~20/10s but bursts trigger 429)
         """
         self.rate_limit_delay = 1.0 / requests_per_second
         self._last_request_time = 0.0
+        self._rate_lock = asyncio.Lock()
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[str, dict] = {}
 
@@ -81,15 +82,16 @@ class TVMazeClient:
             self._client = None
 
     async def _rate_limit(self) -> None:
-        """Enforce rate limiting."""
-        now = asyncio.get_event_loop().time()
-        elapsed = now - self._last_request_time
-        if elapsed < self.rate_limit_delay:
-            await asyncio.sleep(self.rate_limit_delay - elapsed)
-        self._last_request_time = asyncio.get_event_loop().time()
+        """Enforce rate limiting with a lock to serialise concurrent requests."""
+        async with self._rate_lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - self._last_request_time
+            if elapsed < self.rate_limit_delay:
+                await asyncio.sleep(self.rate_limit_delay - elapsed)
+            self._last_request_time = asyncio.get_event_loop().time()
 
     async def _get(self, endpoint: str, params: dict | None = None) -> dict | list | None:
-        """Make a GET request to TVMaze API."""
+        """Make a GET request to TVMaze API with retry on 429."""
         if not self._client:
             raise RuntimeError("Client not initialized. Use async with.")
 
@@ -99,21 +101,33 @@ class TVMazeClient:
             logger.debug(f"Cache hit: {endpoint}")
             return self._cache[cache_key]
 
-        await self._rate_limit()
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            await self._rate_limit()
 
-        try:
-            response = await self._client.get(endpoint, params=params)
-            if response.status_code == 404:
+            try:
+                response = await self._client.get(endpoint, params=params)
+                if response.status_code == 404:
+                    return None
+                if response.status_code == 429:
+                    if attempt < max_retries:
+                        wait = 2 ** attempt + 1
+                        logger.warning(f"TVMaze 429 rate limited, retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait)
+                        continue
+                    logger.error(f"TVMaze 429 rate limited after {max_retries} retries: {endpoint}")
+                    return None
+                response.raise_for_status()
+                data = response.json()
+
+                # Cache successful response
+                self._cache[cache_key] = data
+                return data
+            except httpx.HTTPStatusError as e:
+                logger.error(f"TVMaze API error: {e}")
                 return None
-            response.raise_for_status()
-            data = response.json()
 
-            # Cache successful response
-            self._cache[cache_key] = data
-            return data
-        except httpx.HTTPStatusError as e:
-            logger.error(f"TVMaze API error: {e}")
-            return None
+        return None
 
     async def search_shows(self, query: str) -> list[TVShowResult]:
         """Search for TV shows by name.
