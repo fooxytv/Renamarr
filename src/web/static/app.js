@@ -232,7 +232,7 @@ function renderCards(filtered) {
 
     for (const f of filtered) {
         const isSelected = selectedFiles.has(f.id);
-        html += '<div class="media-card' + (isSelected ? ' card-selected' : '') + '">';
+        html += '<div class="media-card' + (isSelected ? ' card-selected' : '') + '" data-file-id="' + f.id + '">';
         html += '<div class="poster-wrapper" onclick="toggleFileSelect(\'' + f.id + '\', ' + !isSelected + ')">';
 
         if (f.poster_url) {
@@ -329,7 +329,7 @@ function renderTable(filtered) {
 
     for (const f of filtered) {
         const isSelected = selectedFiles.has(f.id);
-        html += '<tr class="' + (isSelected ? 'row-selected' : '') + '">';
+        html += '<tr class="' + (isSelected ? 'row-selected' : '') + '" data-file-id="' + f.id + '">';
         html += '<td class="col-select"><input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelect(\'' + f.id + '\', this.checked)"></td>';
         html += '<td><span class="badge badge-' + f.status + '">' + f.status + '</span></td>';
         html += '<td>' + (f.media_type === 'movie' ? 'Movie' : 'TV') + '</td>';
@@ -624,21 +624,51 @@ async function cancelScan() {
 }
 
 function updateFileStatus(id, status) {
-    // Optimistic UI update
+    // Optimistic data update
     for (const f of cachedFiles) {
         if (f.id === id) { f.status = status; break; }
     }
-    // Also update inside duplicate groups
     if (window._cachedDuplicates) {
         for (const g of window._cachedDuplicates) {
             for (const f of g.files) {
                 if (f.id === id) { f.status = status; break; }
             }
         }
-        renderDuplicates(window._cachedDuplicates);
     }
-    renderFiles(cachedFiles);
-    // Update Run button and status counts optimistically
+
+    // Targeted DOM update for card
+    const card = document.querySelector('.media-card[data-file-id="' + id + '"]');
+    if (card) {
+        const badge = card.querySelector('.card-badge');
+        if (badge) badge.innerHTML = '<span class="badge badge-' + status + '">' + status + '</span>';
+        const actions = card.querySelector('.card-actions');
+        if (actions) {
+            if (status === 'pending') {
+                actions.innerHTML = '<button class="btn btn-success" onclick="approveFile(\'' + id + '\')">Approve</button><button class="btn btn-danger" onclick="rejectFile(\'' + id + '\')">Reject</button><button class="btn btn-muted" onclick="ignoreFile(\'' + id + '\')">Ignore</button>';
+            } else if (status === 'approved' || status === 'rejected' || status === 'ignored') {
+                actions.innerHTML = '<button class="btn btn-outline" onclick="resetFile(\'' + id + '\')">Undo</button>';
+            } else {
+                actions.innerHTML = '<button class="btn btn-outline" disabled>' + status + '</button>';
+            }
+        }
+    }
+
+    // Targeted DOM update for table row
+    const row = document.querySelector('tr[data-file-id="' + id + '"]');
+    if (row) {
+        const badge = row.querySelector('.badge');
+        if (badge) { badge.className = 'badge badge-' + status; badge.textContent = status; }
+        const actionCell = row.querySelector('td:last-child');
+        if (actionCell) {
+            if (status === 'pending') {
+                actionCell.innerHTML = '<button class="btn btn-success btn-sm" onclick="approveFile(\'' + id + '\')">Approve</button> <button class="btn btn-danger btn-sm" onclick="rejectFile(\'' + id + '\')">Reject</button> <button class="btn btn-muted btn-sm" onclick="ignoreFile(\'' + id + '\')">Ignore</button>';
+            } else if (status === 'approved' || status === 'rejected' || status === 'ignored') {
+                actionCell.innerHTML = '<button class="btn btn-outline btn-sm" onclick="resetFile(\'' + id + '\')">Undo</button>';
+            }
+        }
+    }
+
+    // Update status counts and Run button
     updateStatusFromCache();
 }
 
@@ -702,8 +732,27 @@ function toggleFileSelect(id, checked) {
         selectedFiles.delete(id);
     }
     updateSelectionUI();
-    // Re-render to update poster overlays and table checkboxes
-    renderFiles(cachedFiles);
+    // Targeted DOM update — no full re-render
+    const card = document.querySelector('.media-card[data-file-id="' + id + '"]');
+    if (card) {
+        card.classList.toggle('card-selected', checked);
+        const wrapper = card.querySelector('.poster-wrapper');
+        // Update onclick to flip the toggle direction
+        wrapper.setAttribute('onclick', "toggleFileSelect('" + id + "', " + !checked + ")");
+        // Add or remove checkmark overlay
+        const existing = wrapper.querySelector('.card-select-overlay');
+        if (checked && !existing) {
+            wrapper.insertAdjacentHTML('beforeend', '<div class="card-select-overlay"><span class="card-check">&#10003;</span></div>');
+        } else if (!checked && existing) {
+            existing.remove();
+        }
+    }
+    const row = document.querySelector('tr[data-file-id="' + id + '"]');
+    if (row) {
+        row.classList.toggle('row-selected', checked);
+        const cb = row.querySelector('.col-select input[type="checkbox"]');
+        if (cb) cb.checked = checked;
+    }
 }
 
 function toggleSelectAll(checked) {
