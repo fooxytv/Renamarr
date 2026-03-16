@@ -609,12 +609,17 @@ function downloadArchive(scanId) {
 
 // Actions
 async function triggerScan(mediaType) {
-    const body = mediaType ? { media_type: mediaType } : {};
-    await api('POST', '/api/scan', body);
+    // Show scanning state immediately before the API call
     document.querySelectorAll('.scan-btn-group .btn').forEach(b => b.disabled = true);
+    const btnScan = document.getElementById('btn-scan');
+    btnScan.innerHTML = '<span class="btn-spinner"></span> Scanning...';
+    document.getElementById('btn-cancel').style.display = '';
     const label = mediaType === 'movies' ? 'movies' : mediaType === 'tv' ? 'TV shows' : 'media library';
     document.getElementById('tab-files').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning ' + label + '...</p></div>';
+    document.getElementById('tab-duplicates').innerHTML = '<div class="scanning"><div class="spinner"></div><p>Scanning...</p></div>';
     startPolling();
+    const body = mediaType ? { media_type: mediaType } : {};
+    api('POST', '/api/scan', body);
 }
 
 async function cancelScan() {
