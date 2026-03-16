@@ -233,8 +233,7 @@ function renderCards(filtered) {
     for (const f of filtered) {
         const isSelected = selectedFiles.has(f.id);
         html += '<div class="media-card' + (isSelected ? ' card-selected' : '') + '">';
-        html += '<div class="card-select"><input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleFileSelect(\'' + f.id + '\', this.checked)" onclick="event.stopPropagation()"></div>';
-        html += '<div class="poster-wrapper">';
+        html += '<div class="poster-wrapper" onclick="toggleFileSelect(\'' + f.id + '\', ' + !isSelected + ')">';
 
         if (f.poster_url) {
             html += '<img src="' + esc(f.poster_url) + '" alt="' + esc(f.title) + '" loading="lazy">';
@@ -243,6 +242,11 @@ function renderCards(filtered) {
             html += '<div class="placeholder-icon">' + (f.media_type === 'movie' ? '&#127909;' : '&#128250;') + '</div>';
             html += '<div>' + esc(f.title || f.source_filename) + '</div>';
             html += '</div>';
+        }
+
+        // Selection checkmark overlay
+        if (isSelected) {
+            html += '<div class="card-select-overlay"><span class="card-check">&#10003;</span></div>';
         }
 
         // Status badge
@@ -698,14 +702,8 @@ function toggleFileSelect(id, checked) {
         selectedFiles.delete(id);
     }
     updateSelectionUI();
-    // Update visual state for the card/row containing this checkbox
-    const checkbox = document.querySelector('input[onchange*="' + id + '"]');
-    if (checkbox) {
-        const card = checkbox.closest('.media-card');
-        if (card) card.classList.toggle('card-selected', checked);
-        const row = checkbox.closest('tr');
-        if (row) row.classList.toggle('row-selected', checked);
-    }
+    // Re-render to update poster overlays and table checkboxes
+    renderFiles(cachedFiles);
 }
 
 function toggleSelectAll(checked) {
