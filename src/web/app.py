@@ -932,7 +932,7 @@ class RenamarrWeb:
                     elif op.tvmaze_show:
                         plot = op.tvmaze_show.summary or ""
                     renames.append({
-                        "source": file.source_filename,
+                        "filename": file.source_filename,
                         "destination": file.destination_filename,
                         "media_type": file.media_type,
                         "title": file.title,
@@ -1095,6 +1095,9 @@ class RenamarrWeb:
                 file_preview.poster_url = poster_url
             file_preview.destination_filename = new_dest_filename
             file_preview.destination_path = new_dest_path
+            # Recalculate confidence with new match
+            if op:
+                file_preview.confidence = self._compute_confidence(op)
 
             # Check if now correctly named
             try:
